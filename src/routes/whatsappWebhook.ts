@@ -61,18 +61,30 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
       // Normalização caso os dados venham dentro de .dados, .data ou na raiz
       const dados = resAnyCar?.dados || resAnyCar?.data || resAnyCar || {};
 
-      // Mapeamento flexível cobrindo variações comuns
+      // Função auxiliar para extrair texto de strings ou objetos aninhados
+      const extrairTexto = (campo: any): string => {
+        if (!campo) return '';
+        if (typeof campo === 'string' || typeof campo === 'number') return String(campo).trim();
+        if (typeof campo === 'object') {
+          return String(campo.nome || campo.descricao || campo.valor || campo.name || campo.modelo || '').trim();
+        }
+        return '';
+      };
+
+      const marca = extrairTexto(dados?.marca);
+      const modelo = extrairTexto(dados?.modelo);
+      const marcaModelo = extrairTexto(dados?.marca_modelo || dados?.marcaModelo);
+
       const veiculo =
-        dados?.marca_modelo ||
-        dados?.marcaModelo ||
-        `${dados?.marca || ''} ${dados?.modelo || ''}`.trim() ||
+        marcaModelo ||
+        `${marca} ${modelo}`.trim() ||
         'Não identificado';
 
-      const anoFab = dados?.ano_fabricacao || dados?.anoFabricacao || dados?.ano || '-';
-      const anoMod = dados?.ano_modelo || dados?.anoModelo || dados?.modelo_ano || '-';
-      const cor = dados?.cor || dados?.cor_veiculo || '-';
-      const combustivel = dados?.combustivel || dados?.tipo_combustivel || '-';
-      const statusVeiculo = dados?.situacao || dados?.status || 'Ativo';
+      const anoFab = extrairTexto(dados?.ano_fabricacao || dados?.anoFabricacao || dados?.ano) || '-';
+      const anoMod = extrairTexto(dados?.ano_modelo || dados?.anoModelo || dados?.modelo_ano) || '-';
+      const cor = extrairTexto(dados?.cor || dados?.cor_veiculo) || '-';
+      const combustivel = extrairTexto(dados?.combustivel || dados?.tipo_combustivel) || '-';
+      const statusVeiculo = extrairTexto(dados?.situacao || dados?.status) || 'Ativo';
 
       // Formatação dos dados retornados
       const resposta =

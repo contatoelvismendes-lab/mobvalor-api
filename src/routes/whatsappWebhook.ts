@@ -22,7 +22,6 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
   fastify.post('/webhook', async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as any;
 
-    // Responde 200 imediatamente para a Meta
     reply.status(200).send({ status: 'EVENT_RECEIVED' });
 
     try {
@@ -37,31 +36,28 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
       const from = message.from;
       const userText = message.text.body.trim().toUpperCase();
 
-      // Regex para identificar formato de placas (Mercosul ou antiga)
+      // Identificador de placas (Mercosul ou antiga)
       const placaRegex = /[A-Z]{3}[0-9][0-9A-Z][0-9]{2}/g;
       const match = userText.match(placaRegex);
 
       if (!match) {
         await sendWhatsAppMessage(
           from,
-          '🚗 Olá! Bem-vindo à *Mobvalor*.\n\nEnvie a *placa* do veículo (ex: *ABC1D23*) que você deseja consultar.'
+          '🚗 Olá! Bem-vindo à *Mobvalor*.\n\nEnvie a *placa* do veículo para consultar a ficha cadastral e o status de aptidão para o *Renave*.'
         );
         return;
       }
 
       const placa = match[0];
-      await sendWhatsAppMessage(from, `🔍 Localizando dados para a placa *${placa}* na base AnyCar... Aguarde um instante.`);
+      await sendWhatsAppMessage(from, `🔍 Analisando dados e elegibilidade *Renave* para a placa *${placa}*...`);
 
-      // Consulta de dados básicos na AnyCar
-      const resAnyCar = await consultarAnyCar('veicular-dados-basicos', placa);
-      
-      // Log para inspecionar a resposta bruta no Render
-      console.log('--- RETORNO ANYCAR BRUTO ---', JSON.stringify(resAnyCar, null, 2));
+      // 1. Consulta Cadastral Avançada (Traz Marca, Modelo, UF, Município, etc.)
+      const resAvancada = await consultarAnyCar('veicular-dados-avancados', placa);
+      const dados = resAvancada?.dados || resAvancada?.data || resAvancada || {};
 
-      // Normalização caso os dados venham dentro de .dados, .data ou na raiz
-      const dados = resAnyCar?.dados || resAnyCar?.data || resAnyCar || {};
+      console.log('--- RETORNO ANYCAR AVANCADO ---', JSON.stringify(dados, null, 2));
 
-      // Função auxiliar para extrair texto de strings ou objetos aninhados
+      // Função auxiliar de extração
       const extrairTexto = (campo: any): string => {
         if (!campo) return '';
         if (typeof campo === 'string' || typeof campo === 'number') return String(campo).trim();
@@ -74,28 +70,45 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
       const marca = extrairTexto(dados?.marca);
       const modelo = extrairTexto(dados?.modelo);
       const marcaModelo = extrairTexto(dados?.marca_modelo || dados?.marcaModelo);
-
-      const veiculo =
-        marcaModelo ||
-        `${marca} ${modelo}`.trim() ||
-        'Não identificado';
+      const veiculo = marcaModelo || `${marca} ${modelo}`.trim() || 'Veículo identificado';
 
       const anoFab = extrairTexto(dados?.ano_fabricacao || dados?.anoFabricacao || dados?.ano) || '-';
       const anoMod = extrairTexto(dados?.ano_modelo || dados?.anoModelo || dados?.modelo_ano) || '-';
       const cor = extrairTexto(dados?.cor || dados?.cor_veiculo) || '-';
       const combustivel = extrairTexto(dados?.combustivel || dados?.tipo_combustivel) || '-';
-      const statusVeiculo = extrairTexto(dados?.situacao || dados?.status) || 'Ativo';
+      const municipioUf = `${extrairTexto(dados?.municipio) || ''} - ${extrairTexto(dados?.uf) || ''}`.trim().replace(/^-|-$/, '') || 'Brasil';
 
-      // Formatação dos dados retornados
+      // Validações impeditivas do Renave
+      const restricoes = dados?.restricoes || dados?.restricao || [];
+      const possuiRestricao = Array.isArray(restricoes) ? restricoes.length > 0 : Boolean(dados?.possui_restricao);
+      const possuiGravame = Boolean(dados?.gravame || dados?.alienacao);
+      const possuiBloqueio = Boolean(dados?.bloqueio_judicial || dados?.renajud);
+
+      let statusRenave = '✅ APTO PARA ENTRADA';
+      let motivoBloqueio = '';
+
+      if (possuiBloqueio) {
+        statusRenave = '❌ INAPTO / BLOQUEIO JUDICIAL';
+        motivoBloqueio = '\n⚠️ Consta bloqueio administrativo/judicial ativo.';
+      } else if (possuiGravame) {
+        statusRenave = '⚠️ ATENÇÃO / GRAVAME ATIVO';
+        motivoBloqueio = '\n⚠️ Necessário baixa de alienação/gravame antes do estoque.';
+      } else if (possuiRestricao) {
+        statusRenave = '⚠️ ATENÇÃO / RESTRIÇÕES DIVERSAS';
+        motivoBloqueio = '\n⚠️ Constam restrições cadastrais na base estadual.';
+      }
+
+      // Mensagem formatada completa
       const resposta =
-        `📋 *Resultado da Consulta - Mobvalor*\n\n` +
+        `📋 *Relatório Veicular & Renave - Mobvalor*\n\n` +
         `🚗 *Veículo:* ${veiculo}\n` +
         `🔢 *Placa:* ${placa}\n` +
         `📅 *Ano/Mod:* ${anoFab}/${anoMod}\n` +
         `🎨 *Cor:* ${cor}\n` +
         `⛽ *Combustível:* ${combustivel}\n` +
-        `🏷️ *Status:* ${statusVeiculo}\n\n` +
-        `Deseja consultar o histórico de sinistro, leilão ou FIPE?`;
+        `📍 *Localidade:* ${municipioUf}\n\n` +
+        `🏢 *Status Renave:* ${statusRenave}${motivoBloqueio}\n\n` +
+        `Deseja consultar a *FIPE atualizada* ou o histórico de *Leilão & Sinistro* deste veículo?`;
 
       await sendWhatsAppMessage(from, resposta);
     } catch (error: any) {

@@ -22,7 +22,7 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
   fastify.post('/webhook', async (req: FastifyRequest, reply: FastifyReply) => {
     const body = req.body as any;
 
-    // Responde 200 imediatamente para a Meta não ficar reprocessando
+    // Responde 200 imediatamente para a Meta
     reply.status(200).send({ status: 'EVENT_RECEIVED' });
 
     try {
@@ -53,17 +53,36 @@ export default async function whatsappWebhook(fastify: FastifyInstance) {
       await sendWhatsAppMessage(from, `🔍 Localizando dados para a placa *${placa}* na base AnyCar... Aguarde um instante.`);
 
       // Consulta de dados básicos na AnyCar
-      const dados = await consultarAnyCar('veicular-dados-basicos', placa);
+      const resAnyCar = await consultarAnyCar('veicular-dados-basicos', placa);
+      
+      // Log para inspecionar a resposta bruta no Render
+      console.log('--- RETORNO ANYCAR BRUTO ---', JSON.stringify(resAnyCar, null, 2));
+
+      // Normalização caso os dados venham dentro de .dados, .data ou na raiz
+      const dados = resAnyCar?.dados || resAnyCar?.data || resAnyCar || {};
+
+      // Mapeamento flexível cobrindo variações comuns
+      const veiculo =
+        dados?.marca_modelo ||
+        dados?.marcaModelo ||
+        `${dados?.marca || ''} ${dados?.modelo || ''}`.trim() ||
+        'Não identificado';
+
+      const anoFab = dados?.ano_fabricacao || dados?.anoFabricacao || dados?.ano || '-';
+      const anoMod = dados?.ano_modelo || dados?.anoModelo || dados?.modelo_ano || '-';
+      const cor = dados?.cor || dados?.cor_veiculo || '-';
+      const combustivel = dados?.combustivel || dados?.tipo_combustivel || '-';
+      const statusVeiculo = dados?.situacao || dados?.status || 'Ativo';
 
       // Formatação dos dados retornados
       const resposta =
         `📋 *Resultado da Consulta - Mobvalor*\n\n` +
-        `🚗 *Veículo:* ${dados?.marca || ''} ${dados?.modelo || 'Não identificado'}\n` +
+        `🚗 *Veículo:* ${veiculo}\n` +
         `🔢 *Placa:* ${placa}\n` +
-        `📅 *Ano/Mod:* ${dados?.anoFabricacao || '-'}/${dados?.anoModelo || '-'}\n` +
-        `🎨 *Cor:* ${dados?.cor || '-'}\n` +
-        `⛽ *Combustível:* ${dados?.combustivel || '-'}\n` +
-        `🏷️ *Status:* Ativo\n\n` +
+        `📅 *Ano/Mod:* ${anoFab}/${anoMod}\n` +
+        `🎨 *Cor:* ${cor}\n` +
+        `⛽ *Combustível:* ${combustivel}\n` +
+        `🏷️ *Status:* ${statusVeiculo}\n\n` +
         `Deseja consultar o histórico de sinistro, leilão ou FIPE?`;
 
       await sendWhatsAppMessage(from, resposta);

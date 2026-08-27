@@ -1,32 +1,27 @@
-import Fastify from 'fastify';
-import dotenv from 'dotenv';
-import { supabase } from './config/supabase';
-import { whatsappRoutes } from './routes/whatsappWebhook';
-import { infinitepayWebhook } from './routes/infinitepayWebhook';
+﻿import "dotenv/config";
+import Fastify from "fastify";
+import whatsappWebhook from "./routes/whatsappWebhook";
 
-dotenv.config();
+const server = Fastify({
+  logger: true,
+});
 
-const app = Fastify({ logger: true });
+server.register(whatsappWebhook);
 
-app.register(whatsappRoutes, { prefix: '/webhook' });
-app.register(infinitepayWebhook, { prefix: '/webhook' });
-
-// Rota de teste
-app.get('/health', async (request, reply) => {
-  return { 
-    status: 'OK', 
-    app: 'Mobvalor Backend',
-    timestamp: new Date().toISOString()
-  };
+server.get("/health", async () => {
+  return { status: "ok" };
 });
 
 const start = async () => {
   try {
-    const port = Number(process.env.PORT) || 3000;
-    await app.listen({ port, host: '0.0.0.0' });
-    console.log(`🚀 Servidor Mobvalor rodando em http://localhost:${port}`);
-  } catch (err) {
-    app.log.error(err);
+    const port = Number(process.env.PORT ?? 3000);
+
+    await server.listen({
+      port,
+      host: "0.0.0.0",
+    });
+  } catch (error) {
+    server.log.error(error);
     process.exit(1);
   }
 };

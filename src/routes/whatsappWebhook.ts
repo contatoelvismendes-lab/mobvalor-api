@@ -1,189 +1,226 @@
-﻿import type { FastifyPluginAsync } from 'fastify';
-import { supabase } from '../config/supabase';
-import apiVeicular from '../services/apiVeicular';
-import infinitePay from '../services/infinitePay';
+﻿import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { PrismaClient } from '@prisma/client';
+import axios from 'axios';
 
-type WhatsAppBody = {
-  telefone?: string;
-  mensagem?: string;
-};
+const prisma = new PrismaClient();
 
-const PLACA_REGEX = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/;
+interface WhatsAppWebhookPayload {
+  object?: string;
+  entry?: Array<{
+    id?: string;
+    changes?: Array<{
+      value?: {
+        messaging_product?: string;
+        metadata?: {
+          display_phone_number?: string;
+          phone_number_id?: string;
+        };
+        messages?: Array<{
+          from: string;
+          id: string;
+          timestamp: string;
+          text?: {
+            body: string;
+          };
+          type: string;
+          interactive?: {
+            type: string;
+            button_reply?: {
+              id: string;
+              title: string;
+            };
+          };
+        }>;
+      };
+    }>;
+  }>;
+}
 
-const money = (value: number | string): string => {
-  if (typeof value === 'string' && value === 'N/A') return value;
-  return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-};
+// Função auxiliar para enviar mensagens via WhatsApp Cloud API
+async function sendWhatsAppMessage(to: string, text: string) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-const vehicleLabel = (vehicle: Record<string, unknown>, keys: string[]): string => {
-  const value = keys.map((key) => vehicle[key]).find((item) => item !== undefined && item !== null);
-  return value ? String(value) : 'N/A';
-};
+  if (!token || !phoneNumberId) {
+    console.error('⚠️ Credenciais do WhatsApp não configuradas no .env');
+    return;
+  }
 
-const gerarRecargaRenave = async (tenantId: string): Promise<string> => {
-  const cobranca = await infinitePay.gerarCobrancaPix(tenantId, 'RENAVE_10');
-  return [
-    '💳 Recarga Renave ON',
-    `Valor: ${money(cobranca.valor)}`,
-    `Link de pagamento: ${cobranca.link_pagamento}`,
-    `Pix Copia e Cola: ${cobranca.pix_copia_e_cola}`,
-    `Pedido: ${cobranca.order_nsu}`,
-    'Após a confirmação do pagamento, seus 10 créditos serão liberados automaticamente.',
-  ].join('\n');
-};
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'text',
+        text: { body: text },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error('❌ Erro ao enviar mensagem do WhatsApp:', error.response?.data || error.message);
+  }
+}
 
-export const whatsappRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/whatsapp', async (request, reply) => {
-    const query = request.query as {
-      'hub.mode'?: string;
-      'hub.challenge'?: string;
-      'hub.verify_token'?: string;
-    };
+// Função para enviar menu interativo com botões
+async function sendWhatsAppInteractiveMenu(to: string, walletBalance: number) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-    if (query['hub.mode'] !== 'subscribe' || query['hub.verify_token'] !== process.env.META_VERIFY_TOKEN) {
-      return reply.code(403).send('Token de verificação inválido');
+  if (!token || !phoneNumberId) return;
+
+  const formattedBalance = walletBalance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: to,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          header: {
+            type: 'text',
+            text: '🚗 *MobValor - Consulta Renave On*'
+          },
+          body: {
+            text: `Olá! Seu saldo atual em carteira é de *${formattedBalance}*.\n\nEscolha uma das opções abaixo para continuar:`
+          },
+          footer: {
+            text: 'Selecione uma opção'
+          },
+          action: {
+            buttons: [
+              {
+                type: 'reply',
+                reply: {
+                  id: 'btn_consultar_placa',
+                  title: 'Consultar Veículo'
+                }
+              },
+              {
+                type: 'reply',
+                reply: {
+                  id: 'btn_ver_saldo',
+                  title: 'Meu Saldo'
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  } catch (error: any) {
+    console.error('❌ Erro ao enviar menu interativo:', error.response?.data || error.message);
+  }
+}
+
+export async function whatsappWebhookRoutes(fastify: FastifyInstance) {
+  // Rota de verificação do Webhook (GET)
+  fastify.get('/webhook/whatsapp', async (req: FastifyRequest, reply: FastifyReply) => {
+    const mode = (req.query as any)['hub.mode'];
+    const token = (req.query as any)['hub.verify_token'];
+    const challenge = (req.query as any)['hub.challenge'];
+
+    const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'mobvalor_verify_token';
+
+    if (mode && token === VERIFY_TOKEN) {
+      return reply.code(200).send(challenge);
     }
-
-    return reply.code(200).send(query['hub.challenge'] ?? '');
+    return reply.code(403).send('Token de verificação inválido');
   });
 
-  app.post('/whatsapp', async (request) => {
-    const { telefone, mensagem } = request.body as WhatsAppBody;
-    const phone = telefone?.trim();
-    const text = mensagem?.trim() ?? '';
-    const leilaoMatch = text.match(/^LEIL[AÃ]O\s+(.+)$/i);
-    const placa = (leilaoMatch?.[1] ?? text).trim().toUpperCase();
-    const isLeilaoCheck = Boolean(leilaoMatch);
+  // Recepção de mensagens do WhatsApp (POST)
+  fastify.post('/webhook/whatsapp', async (req: FastifyRequest<{ Body: WhatsAppWebhookPayload }>, reply: FastifyReply) => {
+    reply.status(200).send({ status: 'EVENT_RECEIVED' });
 
-    if (!phone) {
-      return 'Informe o telefone para gerar sua cobrança Pix.';
-    }
+    try {
+      const entry = req.body.entry?.[0];
+      const message = entry?.changes?.[0]?.value?.messages?.[0];
 
-    if (/^RECARREGAR$/i.test(text)) {
-      const rechargeUser = await supabase.from('users').select('tenant_id').eq('telefone', phone).maybeSingle();
-      if (rechargeUser.error) throw rechargeUser.error;
-      if (!rechargeUser.data?.tenant_id) return 'Faça uma consulta primeiro para vincular seu telefone a uma loja.';
-      return gerarRecargaRenave(rechargeUser.data.tenant_id);
-    }
+      console.log('--- WEBHOOK WHATSAPP RECEBIDO ---');
+      console.log('Payload messages:', JSON.stringify(message));
 
-    if (!placa) {
-      return 'Informe telefone e placa. Exemplo: BRA2E19';
-    }
-
-    if (!PLACA_REGEX.test(placa)) {
-      return 'Envie uma placa válida no formato antigo ou Mercosul. Exemplo: BRA2E19';
-    }
-
-    let user = await supabase
-      .from('users')
-      .select('id, tenant_id, tenants(*)')
-      .eq('telefone', phone)
-      .maybeSingle();
-
-    if (user.error) throw user.error;
-
-    let userId = user.data?.id;
-    let tenantId = user.data?.tenant_id;
-    let tenant = Array.isArray(user.data?.tenants) ? user.data.tenants[0] : user.data?.tenants;
-
-    if (!user.data) {
-      const createdTenant = await supabase
-        .from('tenants')
-        .insert({ nome_loja: `WhatsApp ${phone}`, saldo_renave_on: 1, saldo_leilao_check: 1 })
-        .select('id, saldo_renave_on, saldo_leilao_check')
-        .single();
-
-      if (createdTenant.error) throw createdTenant.error;
-
-      const createdUser = await supabase
-        .from('users')
-        .insert({ nome: `Cliente ${phone}`, telefone: phone, telefone_whatsapp: phone, tenant_id: createdTenant.data.id })
-        .select('id, tenant_id')
-        .single();
-
-      if (createdUser.error) throw createdUser.error;
-
-      userId = createdUser.data.id;
-      tenantId = createdUser.data.tenant_id;
-      tenant = createdTenant.data;
-    }
-
-    if (isLeilaoCheck) {
-      const saldo = Number(tenant?.saldo_leilao_check ?? 0);
-      if (saldo <= 0) {
-        return gerarRecargaRenave(tenantId);
+      if (!message) {
+        console.log('Mensagem ignorada: objeto message vazio.');
+        return;
       }
 
-      const consulta = await apiVeicular.consultarLeilaoCheck(placa);
-      const novoSaldo = saldo - 1;
-      const updatedTenant = await supabase
-        .from('tenants')
-        .update({ saldo_leilao_check: novoSaldo })
-        .eq('id', tenantId);
+      const from = message.from;
 
-      if (updatedTenant.error) throw updatedTenant.error;
+      // Trata cliques em botões interativos
+      if (message.type === 'interactive' && message.interactive?.button_reply) {
+        const buttonId = message.interactive.button_reply.id;
+        console.log(`Botão clicado por ${from}: ${buttonId}`);
 
-      const savedConsulta = await supabase.from('consultas').insert({
-        user_id: userId,
-        tenant_id: tenantId,
-        placa,
-        tipo_consulta: 'LEILAO_CHECK',
-      });
+        const dealer = await prisma.dealer.findUnique({
+          where: { whatsappNumber: from }
+        });
 
-      if (savedConsulta.error) throw savedConsulta.error;
+        if (!dealer) {
+          await sendWhatsAppMessage(from, '❌ Revenda não encontrada.');
+          return;
+        }
 
-      const risco = consulta.possuiSinistro || consulta.classificacaoMonta !== 'Sem Indício de Monta'
-        ? '🔴 Atenção: há indício de risco estrutural ou sinistro.'
-        : '🟢 Sem indício de monta ou sinistro informado.';
-      return [
-        `🔎 Leilão Check - ${consulta.placa}`,
-        `Histórico de leilão: ${consulta.possuiLeilao ? '✅ Sim' : '❌ Não'}`,
-        consulta.possuiLeilao ? `Tipo: ${consulta.tipoLeilao}` : '',
-        consulta.possuiLeilao ? `Comitente: ${consulta.comitente}` : '',
-        consulta.possuiLeilao ? `Lote: ${consulta.lote} | Data: ${consulta.dataLeilao}` : '',
-        `Sinistro: ${consulta.possuiSinistro ? '⚠️ Sim' : '✅ Não'}`,
-        `Classificação de monta: ${consulta.classificacaoMonta}`,
-        risco,
-        `Deságio sugerido: ${consulta.desagioSugeridoPct}%`,
-        `Parecer comercial: ${consulta.parecerComercial}`,
-        `Saldo restante: ${novoSaldo} crédito(s)`,
-      ].filter(Boolean).join('\n');
+        if (buttonId === 'btn_ver_saldo') {
+const saldo = `R$ ${Number(dealer.walletBalance).toFixed(2).replace('.', ',')}`;
+          await sendWhatsAppMessage(from, `💰 Seu saldo atual em carteira é de *${saldo}*.`);
+        } else if (buttonId === 'btn_consultar_placa') {
+          await sendWhatsAppMessage(from, '📝 Por favor, envie apenas a **Placa** do veículo que deseja consultar (ex: SNQ0E12).');
+        }
+        return;
+      }
+
+      // Trata mensagens de texto comuns
+      if (message.type === 'text' && message.text?.body) {
+        const texto = message.text.body.trim();
+        console.log(`De: ${from} | Texto: ${texto}`);
+
+        // 1. Busca a revenda no banco pelo número de WhatsApp
+        const dealer = await prisma.dealer.findUnique({
+          where: { whatsappNumber: from }
+        });
+
+        if (!dealer) {
+          console.log(`⚠️ Dealer não encontrado para o número: ${from}`);
+          await sendWhatsAppMessage(
+            from,
+            '❌ *Acesso não autorizado.*\nSeu número de WhatsApp não está cadastrado como revenda ativa no MobValor.'
+          );
+          return;
+        }
+
+        console.log(`✅ Dealer encontrado: ${dealer.id} - Saldo: ${dealer.walletBalance}`);
+
+        // Se o usuário mandou apenas a placa (ex: formato de placa 7 dígitos ABC1D23 ou ABC1234)
+        const placaRegex = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/i;
+        if (placaRegex.test(texto)) {
+          // Envia o menu interativo com o saldo atualizado da revenda
+          await sendWhatsAppInteractiveMenu(from, Number(dealer.walletBalance));
+          return;
+        } else {
+          await sendWhatsAppMessage(
+            from,
+            '👋 Olá! Para iniciar a consulta Renave On, envie apenas a **Placa** do veículo (ex: SNQ0E12).'
+          );
+          return;
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Erro crítico no processamento do webhook do WhatsApp:', error);
     }
-
-    const saldo = Number(tenant?.saldo_renave_on ?? 0);
-    if (saldo <= 0) {
-      return gerarRecargaRenave(tenantId);
-    }
-
-    const consulta = await apiVeicular.consultarRenaveON(placa);
-    const novoSaldo = saldo - 1;
-
-    const updatedTenant = await supabase
-      .from('tenants')
-      .update({ saldo_renave_on: novoSaldo })
-      .eq('id', tenantId);
-
-    if (updatedTenant.error) throw updatedTenant.error;
-
-    const savedConsulta = await supabase.from('consultas').insert({
-      user_id: userId,
-      tenant_id: tenantId,
-      placa,
-      tipo_consulta: 'renave_on',
-    });
-
-    if (savedConsulta.error) throw savedConsulta.error;
-
-    const apto = consulta.semaforo === true || /apto|verde/i.test(String(consulta.semaforo));
-    return [
-      `Consulta Renave ON - ${placa}`,
-      `Veículo: ${vehicleLabel(consulta.veiculo, ['marca', 'brand'])} ${vehicleLabel(consulta.veiculo, ['modelo', 'model'])}`,
-      `Ano: ${vehicleLabel(consulta.veiculo, ['ano', 'year'])}`,
-      `Semáforo Renave: ${apto ? '🟢 Apto' : '🔴 Bloqueio'}`,
-      `Total de débitos: ${money(consulta.totalDebitos)}`,
-      `FIPE: ${money(consulta.fipe)}`,
-      `Saldo restante: ${novoSaldo} crédito(s)`,
-    ].join('\n');
-
   });
-};
+}

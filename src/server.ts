@@ -1,14 +1,14 @@
 ﻿import Fastify from 'fastify';
 import dotenv from 'dotenv';
 import { supabase } from './config/supabase';
-import { whatsappRoutes } from './routes/whatsappWebhook';
+import { whatsappWebhookRoutes } from './routes/whatsappWebhook';
 import { infinitepayWebhook } from './routes/infinitepayWebhook';
 
 dotenv.config();
 
 const app = Fastify({ logger: true });
 
-app.register(whatsappRoutes, { prefix: '/webhook' });
+app.register(whatsappWebhookRoutes);
 app.register(infinitepayWebhook, { prefix: '/webhook' });
 
 // Rota de teste

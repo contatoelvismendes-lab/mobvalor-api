@@ -6,19 +6,24 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "postinstall": "prisma skills sync || exit 0"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/genai": "^2.19.0",
+    "@prisma/client": "^6.19.3",
     "@supabase/supabase-js": "^2.49.1",
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
-    "fastify": "^5.2.1"
+    "fastify": "^5.2.1",
+    "openai": "^7.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",
+    "prisma": "^6.19.3",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }

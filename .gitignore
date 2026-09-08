@@ -1,3 +1,9 @@
 node_modules
 .env
 dist
+# Certificados Digitais e Chaves
+certs/
+*.pfx
+*.p12
+*.key
+*.pem

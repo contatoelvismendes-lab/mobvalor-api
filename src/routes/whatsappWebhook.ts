@@ -1,223 +1,189 @@
-﻿import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { consultarAnyCar } from '../services/anycarService';
-import { sendWhatsAppMessage } from '../services/whatsappService';
-import { InfosimplesService } from '../services/infosimplesService';
+﻿import type { FastifyPluginAsync } from 'fastify';
+import { supabase } from '../config/supabase';
+import apiVeicular from '../services/apiVeicular';
+import infinitePay from '../services/infinitePay';
 
-interface WhatsAppWebhookPayload {
-  object?: string;
-  entry?: Array<{
-    id?: string;
-    changes?: Array<{
-      value?: {
-        messaging_product?: string;
-        metadata?: {
-          display_phone_number?: string;
-          phone_number_id?: string;
-        };
-        contacts?: Array<{
-          profile?: { name?: string };
-          wa_id?: string;
-        }>;
-        messages?: Array<{
-          from: string;
-          id: string;
-          timestamp: string;
-          type: string;
-          text?: { body: string };
-        }>;
-      };
-      field?: string;
-    }>;
-  }>;
-}
+type WhatsAppBody = {
+  telefone?: string;
+  mensagem?: string;
+};
 
-// Armazenamento em memória para a máquina de estados de autorização OTP
-interface SessaoConsulta {
-  etapa: 'AGUARDANDO_WHATSAPP_TITULAR' | 'AGUARDANDO_OTP_LOJISTA';
-  placa: string;
-  renavam: string;
-  uf: string;
-  telefoneTitular?: string;
-  tokenOtp?: string;
-  expiraEm: number;
-}
+const PLACA_REGEX = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/;
 
-const sessoesAtivas = new Map<string, SessaoConsulta>();
+const money = (value: number | string): string => {
+  if (typeof value === 'string' && value === 'N/A') return value;
+  return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
 
-export default async function whatsappWebhook(fastify: FastifyInstance) {
-  const infosimples = new InfosimplesService();
+const vehicleLabel = (vehicle: Record<string, unknown>, keys: string[]): string => {
+  const value = keys.map((key) => vehicle[key]).find((item) => item !== undefined && item !== null);
+  return value ? String(value) : 'N/A';
+};
 
-  // Validação da Meta/WhatsApp Webhook
-  fastify.get('/webhook/whatsapp', async (req: FastifyRequest, reply: FastifyReply) => {
-    const query = req.query as Record<string, string>;
-    const mode = query['hub.mode'] || query['hub_mode'];
-    const token = query['hub.verify_token'] || query['hub_verify_token'];
-    const challenge = query['hub.challenge'] || query['hub_challenge'];
+const gerarRecargaRenave = async (tenantId: string): Promise<string> => {
+  const cobranca = await infinitePay.gerarCobrancaPix(tenantId, 'RENAVE_10');
+  return [
+    '💳 Recarga Renave ON',
+    `Valor: ${money(cobranca.valor)}`,
+    `Link de pagamento: ${cobranca.link_pagamento}`,
+    `Pix Copia e Cola: ${cobranca.pix_copia_e_cola}`,
+    `Pedido: ${cobranca.order_nsu}`,
+    'Após a confirmação do pagamento, seus 10 créditos serão liberados automaticamente.',
+  ].join('\n');
+};
 
-    const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'mobvalor_token_secreto_123';
+export const whatsappRoutes: FastifyPluginAsync = async (app) => {
+  app.get('/whatsapp', async (request, reply) => {
+    const query = request.query as {
+      'hub.mode'?: string;
+      'hub.challenge'?: string;
+      'hub.verify_token'?: string;
+    };
 
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      return reply.status(200).send(challenge);
+    if (query['hub.mode'] !== 'subscribe' || query['hub.verify_token'] !== process.env.META_VERIFY_TOKEN) {
+      return reply.code(403).send('Token de verificação inválido');
     }
-    return reply.status(403).send('Forbidden');
+
+    return reply.code(200).send(query['hub.challenge'] ?? '');
   });
 
-  // Recepção de mensagens
-  fastify.post('/webhook/whatsapp', async (req: FastifyRequest<{ Body: WhatsAppWebhookPayload }>, reply: FastifyReply) => {
-    reply.status(200).send({ status: 'EVENT_RECEIVED' });
+  app.post('/whatsapp', async (request) => {
+    const { telefone, mensagem } = request.body as WhatsAppBody;
+    const phone = telefone?.trim();
+    const text = mensagem?.trim() ?? '';
+    const leilaoMatch = text.match(/^LEIL[AÃ]O\s+(.+)$/i);
+    const placa = (leilaoMatch?.[1] ?? text).trim().toUpperCase();
+    const isLeilaoCheck = Boolean(leilaoMatch);
 
-    try {
-      const entry = req.body.entry?.[0];
-      const message = entry?.changes?.[0]?.value?.messages?.[0];
+    if (!phone) {
+      return 'Informe o telefone para gerar sua cobrança Pix.';
+    }
 
-      if (!message || message.type !== 'text' || !message.text?.body) return;
+    if (/^RECARREGAR$/i.test(text)) {
+      const rechargeUser = await supabase.from('users').select('tenant_id').eq('telefone', phone).maybeSingle();
+      if (rechargeUser.error) throw rechargeUser.error;
+      if (!rechargeUser.data?.tenant_id) return 'Faça uma consulta primeiro para vincular seu telefone a uma loja.';
+      return gerarRecargaRenave(rechargeUser.data.tenant_id);
+    }
 
-      const from = message.from; // Número do lojista
-      const texto = message.text.body.trim();
-      const sessaoAtual = sessoesAtivas.get(from);
+    if (!placa) {
+      return 'Informe telefone e placa. Exemplo: BRA2E19';
+    }
 
-      // Limpa sessões expiradas (> 10 minutos)
-      if (sessaoAtual && Date.now() > sessaoAtual.expiraEm) {
-        sessoesAtivas.delete(from);
+    if (!PLACA_REGEX.test(placa)) {
+      return 'Envie uma placa válida no formato antigo ou Mercosul. Exemplo: BRA2E19';
+    }
+
+    let user = await supabase
+      .from('users')
+      .select('id, tenant_id, tenants(*)')
+      .eq('telefone', phone)
+      .maybeSingle();
+
+    if (user.error) throw user.error;
+
+    let userId = user.data?.id;
+    let tenantId = user.data?.tenant_id;
+    let tenant = Array.isArray(user.data?.tenants) ? user.data.tenants[0] : user.data?.tenants;
+
+    if (!user.data) {
+      const createdTenant = await supabase
+        .from('tenants')
+        .insert({ nome_loja: `WhatsApp ${phone}`, saldo_renave_on: 1, saldo_leilao_check: 1 })
+        .select('id, saldo_renave_on, saldo_leilao_check')
+        .single();
+
+      if (createdTenant.error) throw createdTenant.error;
+
+      const createdUser = await supabase
+        .from('users')
+        .insert({ nome: `Cliente ${phone}`, telefone: phone, telefone_whatsapp: phone, tenant_id: createdTenant.data.id })
+        .select('id, tenant_id')
+        .single();
+
+      if (createdUser.error) throw createdUser.error;
+
+      userId = createdUser.data.id;
+      tenantId = createdUser.data.tenant_id;
+      tenant = createdTenant.data;
+    }
+
+    if (isLeilaoCheck) {
+      const saldo = Number(tenant?.saldo_leilao_check ?? 0);
+      if (saldo <= 0) {
+        return gerarRecargaRenave(tenantId);
       }
 
-      // ESTADO 2: Lojista enviou o código OTP recebido do proprietário
-      if (sessaoAtual && sessaoAtual.etapa === 'AGUARDANDO_OTP_LOJISTA') {
-        const codigoDigitado = texto.replace(/\D/g, '');
+      const consulta = await apiVeicular.consultarLeilaoCheck(placa);
+      const novoSaldo = saldo - 1;
+      const updatedTenant = await supabase
+        .from('tenants')
+        .update({ saldo_leilao_check: novoSaldo })
+        .eq('id', tenantId);
 
-        if (codigoDigitado === sessaoAtual.tokenOtp) {
-          await sendWhatsAppMessage(
-            from,
-            '✅ *Consentimento LGPD validado com sucesso!*\nGerando Laudo Renave On oficial...'
-          );
+      if (updatedTenant.error) throw updatedTenant.error;
 
-          // Dispara a consulta na Infosimples com autorização auditada
-          let laudo: any = { aptoParaEntrada: true, pendenciasIdentificadas: [] };
-          try {
-            laudo = await infosimples.gerarLaudoRenaveOn({
-              placa: sessaoAtual.placa,
-              renavam: sessaoAtual.renavam,
-              uf: sessaoAtual.uf,
-            });
-          } catch (e: any) {
-            fastify.log.warn({ err: e.message }, 'Aviso na emissão do laudo');
-          }
-
-          const statusIcon = laudo.aptoParaEntrada ? '🟢' : '🔴';
-          const statusTexto = laudo.aptoParaEntrada
-            ? '*APTO PARA ENTRADA NO ESTOQUE (RENAVE)*'
-            : '*RESTRITO / PENDÊNCIAS DETECTADAS*';
-
-          let pendenciasTexto = '';
-          if (!laudo.aptoParaEntrada && laudo.pendenciasIdentificadas?.length > 0) {
-            pendenciasTexto = '\n⚠️ *Pendências:* \n' +
-              laudo.pendenciasIdentificadas.map((p: string) => ` • ${p}`).join('\n');
-          }
-
-          const respostaLaudo =
-            `🔍 *LAUDO RENAVE ON - MOBVALOR*\n\n` +
-            `🔢 *Placa:* ${sessaoAtual.placa}\n` +
-            `📑 *Renavam:* ${sessaoAtual.renavam}\n` +
-            `📍 *UF:* ${sessaoAtual.uf}\n` +
-            `🛡️ *Autorização LGPD:* Confirmada (Titular: ${sessaoAtual.telefoneTitular})\n\n` +
-            `${statusIcon} *Status Renave:* ${statusTexto}` +
-            `${pendenciasTexto}`;
-
-          await sendWhatsAppMessage(from, respostaLaudo);
-          sessoesAtivas.delete(from);
-          return;
-        } else {
-          await sendWhatsAppMessage(
-            from,
-            '❌ *Código incorreto ou inválido.* Por favor, peça ao proprietário o código de 6 dígitos enviado ao WhatsApp dele e digite novamente.'
-          );
-          return;
-        }
-      }
-
-      // ESTADO 1: Lojista enviou o telefone do proprietário
-      if (sessaoAtual && sessaoAtual.etapa === 'AGUARDANDO_WHATSAPP_TITULAR') {
-        const telefoneLimpo = texto.replace(/\D/g, '');
-
-        if (telefoneLimpo.length < 10 || telefoneLimpo.length > 13) {
-          await sendWhatsAppMessage(
-            from,
-            '⚠️ *Número inválido.* Por favor, envie o WhatsApp do proprietário com DDD (ex: 81999998888):'
-          );
-          return;
-        }
-
-        // Formata para padrão internacional (DDI 55)
-        const telefoneTitularFormatado = telefoneLimpo.startsWith('55') ? telefoneLimpo : `55${telefoneLimpo}`;
-        
-        // Gera código de 6 dígitos
-        const tokenOtp = Math.floor(100000 + Math.random() * 900000).toString();
-
-        // Atualiza a sessão
-        sessaoAtual.etapa = 'AGUARDANDO_OTP_LOJISTA';
-        sessaoAtual.telefoneTitular = telefoneTitularFormatado;
-        sessaoAtual.tokenOtp = tokenOtp;
-        sessaoAtual.expiraEm = Date.now() + 10 * 60 * 1000; // 10 minutos
-        sessoesAtivas.set(from, sessaoAtual);
-
-        // Dispara mensagem com o Token para o WhatsApp do Proprietário
-        await sendWhatsAppMessage(
-          telefoneTitularFormatado,
-          `🔐 *MobValor / Azzu - Autorização de Consulta Veicular*\n\n` +
-          `Uma revenda de veículos está solicitando a verificação de regularidade do veículo placa *${sessaoAtual.placa}* em conformidade com a LGPD.\n\n` +
-          `Seu código de autorização é: *${tokenOtp}*\n\n` +
-          `_Informe este código ao lojista apenas se você autoriza a consulta deste veículo._`
-        );
-
-        // Notifica o Lojista
-        await sendWhatsAppMessage(
-          from,
-          `📲 Código de autorização LGPD enviado para o WhatsApp do proprietário (*${telefoneTitularFormatado}*).\n\n` +
-          `👉 *Solicite o código de 6 dígitos ao cliente e digite aqui para liberar o Laudo Renave On:*`
-        );
-        return;
-      }
-
-      // FLUXO INICIAL: Reconhecimento da Placa e Renavam
-      const matchPlaca = texto.toUpperCase().match(/[A-Z]{3}[0-9][0-9A-Z][0-9]{2}/);
-      const matchRenavam = texto.match(/\b\d{9,11}\b/);
-
-      if (!matchPlaca || !matchRenavam) {
-        await sendWhatsAppMessage(
-          from,
-          '👋 Olá! Para iniciar a consulta Renave On com autorização LGPD, envie a *Placa e o Renavam* do veículo (ex: `SNQ0E12 01361491997`).'
-        );
-        return;
-      }
-
-      const placa = matchPlaca[0];
-      const renavam = matchRenavam[0];
-      let uf = 'PE';
-
-      // Consulta dados básicos cadastrais no AnyCar
-      try {
-        const dadosVeiculo = await consultarAnyCar(placa);
-        if (dadosVeiculo?.uf) uf = dadosVeiculo.uf;
-      } catch (e) {
-        // Fallback silencioso
-      }
-
-      // Cria a sessão aguardando o telefone do titular
-      sessoesAtivas.set(from, {
-        etapa: 'AGUARDANDO_WHATSAPP_TITULAR',
+      const savedConsulta = await supabase.from('consultas').insert({
+        user_id: userId,
+        tenant_id: tenantId,
         placa,
-        renavam,
-        uf,
-        expiraEm: Date.now() + 10 * 60 * 1000,
+        tipo_consulta: 'LEILAO_CHECK',
       });
 
-      await sendWhatsAppMessage(
-        from,
-        `🚗 *Veículo Identificado:* Placa *${placa}* | Renavam *${renavam}*\n\n` +
-        `🛡️ *Conformidade LGPD:* Para realizar a auditoria de restrições no Renave On, informe o *WhatsApp do Proprietário* (com DDD, ex: 81999998888) para envio do código de autorização:`
-      );
-    } catch (error: any) {
-      fastify.log.error({ err: error.message }, 'Erro no Webhook WhatsApp');
+      if (savedConsulta.error) throw savedConsulta.error;
+
+      const risco = consulta.possuiSinistro || consulta.classificacaoMonta !== 'Sem Indício de Monta'
+        ? '🔴 Atenção: há indício de risco estrutural ou sinistro.'
+        : '🟢 Sem indício de monta ou sinistro informado.';
+      return [
+        `🔎 Leilão Check - ${consulta.placa}`,
+        `Histórico de leilão: ${consulta.possuiLeilao ? '✅ Sim' : '❌ Não'}`,
+        consulta.possuiLeilao ? `Tipo: ${consulta.tipoLeilao}` : '',
+        consulta.possuiLeilao ? `Comitente: ${consulta.comitente}` : '',
+        consulta.possuiLeilao ? `Lote: ${consulta.lote} | Data: ${consulta.dataLeilao}` : '',
+        `Sinistro: ${consulta.possuiSinistro ? '⚠️ Sim' : '✅ Não'}`,
+        `Classificação de monta: ${consulta.classificacaoMonta}`,
+        risco,
+        `Deságio sugerido: ${consulta.desagioSugeridoPct}%`,
+        `Parecer comercial: ${consulta.parecerComercial}`,
+        `Saldo restante: ${novoSaldo} crédito(s)`,
+      ].filter(Boolean).join('\n');
     }
+
+    const saldo = Number(tenant?.saldo_renave_on ?? 0);
+    if (saldo <= 0) {
+      return gerarRecargaRenave(tenantId);
+    }
+
+    const consulta = await apiVeicular.consultarRenaveON(placa);
+    const novoSaldo = saldo - 1;
+
+    const updatedTenant = await supabase
+      .from('tenants')
+      .update({ saldo_renave_on: novoSaldo })
+      .eq('id', tenantId);
+
+    if (updatedTenant.error) throw updatedTenant.error;
+
+    const savedConsulta = await supabase.from('consultas').insert({
+      user_id: userId,
+      tenant_id: tenantId,
+      placa,
+      tipo_consulta: 'renave_on',
+    });
+
+    if (savedConsulta.error) throw savedConsulta.error;
+
+    const apto = consulta.semaforo === true || /apto|verde/i.test(String(consulta.semaforo));
+    return [
+      `Consulta Renave ON - ${placa}`,
+      `Veículo: ${vehicleLabel(consulta.veiculo, ['marca', 'brand'])} ${vehicleLabel(consulta.veiculo, ['modelo', 'model'])}`,
+      `Ano: ${vehicleLabel(consulta.veiculo, ['ano', 'year'])}`,
+      `Semáforo Renave: ${apto ? '🟢 Apto' : '🔴 Bloqueio'}`,
+      `Total de débitos: ${money(consulta.totalDebitos)}`,
+      `FIPE: ${money(consulta.fipe)}`,
+      `Saldo restante: ${novoSaldo} crédito(s)`,
+    ].join('\n');
+
   });
-}
+};

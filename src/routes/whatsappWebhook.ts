@@ -74,7 +74,7 @@ async function sendWhatsAppInteractiveMenu(to: string, walletBalance: number) {
 
   if (!token || !phoneNumberId) return;
 
-  const formattedBalance = walletBalance.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const formattedBalance = `R$ ${Number(walletBalance).toFixed(2).replace('.', ',')}`;
 
   try {
     await axios.post(
@@ -175,7 +175,7 @@ export async function whatsappWebhookRoutes(fastify: FastifyInstance) {
         }
 
         if (buttonId === 'btn_ver_saldo') {
-const saldo = `R$ ${Number(dealer.walletBalance).toFixed(2).replace('.', ',')}`;
+          const saldo = `R$ ${Number(dealer.walletBalance).toFixed(2).replace('.', ',')}`;
           await sendWhatsAppMessage(from, `💰 Seu saldo atual em carteira é de *${saldo}*.`);
         } else if (buttonId === 'btn_consultar_placa') {
           await sendWhatsAppMessage(from, '📝 Por favor, envie apenas a **Placa** do veículo que deseja consultar (ex: SNQ0E12).');
@@ -188,7 +188,7 @@ const saldo = `R$ ${Number(dealer.walletBalance).toFixed(2).replace('.', ',')}`;
         const texto = message.text.body.trim();
         console.log(`De: ${from} | Texto: ${texto}`);
 
-        // 1. Busca a revenda no banco pelo número de WhatsApp
+        // Busca a revenda no banco pelo número de WhatsApp
         const dealer = await prisma.dealer.findUnique({
           where: { whatsappNumber: from }
         });
@@ -204,7 +204,7 @@ const saldo = `R$ ${Number(dealer.walletBalance).toFixed(2).replace('.', ',')}`;
 
         console.log(`✅ Dealer encontrado: ${dealer.id} - Saldo: ${dealer.walletBalance}`);
 
-        // Se o usuário mandou apenas a placa (ex: formato de placa 7 dígitos ABC1D23 ou ABC1234)
+        // Valida se o texto enviado é uma placa (formato 7 dígitos)
         const placaRegex = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/i;
         if (placaRegex.test(texto)) {
           // Envia o menu interativo com o saldo atualizado da revenda

@@ -1,39 +1,28 @@
+datasource db {
+  provider = "postgresql" // ou "sqlite", conforme o seu projeto utiliza
+  url      = env("DATABASE_URL")
+}
 
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
-}model Dealer {
-  id                  String    @id @default(uuid())
-  whatsapp            String    @unique // Número do WhatsApp (identificador principal)
-  name                String?   // Nome preferido
-  email               String?   // E-mail para notas/relatórios
-  documentType        String?   // "CPF" ou "CNPJ"
-  document            String?   // CPF ou CNPJ formatado
-  companyName         String?   // Razão Social (se PJ)
-  addressZip          String?   // CEP
-  addressStreet       String?   // Logradouro, Número, Complemento
-  addressNeighborhood String?   // Bairro
-  addressCity         String?   // Cidade
-  addressState        String?   // Estado (UF)
-  registrationStep    String    @default("COMPLETED") // Controla o estado atual do cadastro se estiver pendente
-  balance             Float     @default(0.0) // Saldo ou créditos disponíveis
-  active              Boolean   @default(true)
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  queries             QueryLog[]
-}
-
-model QueryLog {
-  id        String   @id @default(uuid())
-  dealerId  String
-  dealer    Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
-  plate     String   // Placa consultada
-  cost      Float    // Custo da consulta
-  createdAt DateTime @default(now())
+model Dealer {
+  id                  String   @id @default(uuid())
+  whatsapp            String   @unique
+  name                String?
+  email               String?  @unique
+  documentType        String?
+  document            String?  @unique
+  companyName         String?
+  addressZip          String?
+  addressStreet       String?
+  addressNeighborhood String?
+  addressCity         String?
+  addressState        String?
+  role                String?
+  balance             Float    @default(0.0)
+  registrationStep    String   @default("WAITING_NAME")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }

@@ -1,126 +1,39 @@
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
-}
 
 generator client {
   provider = "prisma-client-js"
 }
 
-// -------------------------------------------------------------
-// ENUMS
-// -------------------------------------------------------------
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}model Dealer {
+  id                  String    @id @default(uuid())
+  whatsapp            String    @unique // Número do WhatsApp (identificador principal)
+  name                String?   // Nome preferido
+  email               String?   // E-mail para notas/relatórios
+  documentType        String?   // "CPF" ou "CNPJ"
+  document            String?   // CPF ou CNPJ formatado
+  companyName         String?   // Razão Social (se PJ)
+  addressZip          String?   // CEP
+  addressStreet       String?   // Logradouro, Número, Complemento
+  addressNeighborhood String?   // Bairro
+  addressCity         String?   // Cidade
+  addressState        String?   // Estado (UF)
+  registrationStep    String    @default("COMPLETED") // Controla o estado atual do cadastro se estiver pendente
+  balance             Float     @default(0.0) // Saldo ou créditos disponíveis
+  active              Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-enum ConsultationTier {
-  TIER_1_FREE
-  TIER_2_COMMERCIAL_RISK
-  TIER_3_AUCTION_FULL
+  queries             QueryLog[]
 }
 
-enum PaymentMethod {
-  PIX
-  CREDIT_CARD
-  WALLET_BALANCE
-}
-
-enum PaymentStatus {
-  PENDING
-  PAID
-  FAILED
-  EXPIRED
-  REFUNDED
-}
-
-enum TransactionType {
-  WALLET_RECHARGE
-  CONSULTATION_DEBIT
-  BONUS_CREDIT
-  ADJUSTMENT
-}
-
-// -------------------------------------------------------------
-// MODELS
-// -------------------------------------------------------------
-
-model Dealer {
-  id                String              @id @default(uuid())
-  whatsappNumber    String              @unique
-  name              String?
-  storeName         String?
-  document          String?             @unique
-  walletBalance     Decimal             @default(0.00) @db.Decimal(10, 2)
-  gatewayCustomerId String?
-  cardToken         String?
-  cardLast4         String?
-  cardBrand         String?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  consultations     Consultation[]
-  transactions      WalletTransaction[]
-  payments          PaymentOrder[]
-
-  @@index([whatsappNumber])
-}
-
-model Consultation {
-  id            String           @id @default(uuid())
-  dealerId      String
-  dealer        Dealer           @relation(fields: [dealerId], references: [id], onDelete: Cascade)
-  plate         String           @db.VarChar(10)
-  tier          ConsultationTier
-  priceCharged  Decimal          @db.Decimal(10, 2)
-  apiCostDirect Decimal          @db.Decimal(10, 2)
-  rawResponse   Json?
-  fipeValue     Decimal?         @db.Decimal(10, 2)
-  hasAuction    Boolean?
-  hasSinistro   Boolean?
-  hasRecall     Boolean?
-  createdAt     DateTime         @default(now())
-  paymentOrder  PaymentOrder?
-
-  @@index([dealerId])
-  @@index([plate])
-  @@index([createdAt])
-}
-
-model PaymentOrder {
-  id             String             @id @default(uuid())
-  dealerId       String
-  dealer         Dealer             @relation(fields: [dealerId], references: [id], onDelete: Cascade)
-  consultationId String?            @unique
-  consultation   Consultation?      @relation(fields: [consultationId], references: [id])
-  amount         Decimal            @db.Decimal(10, 2)
-  bonusAmount    Decimal            @default(0.00) @db.Decimal(10, 2)
-  method         PaymentMethod
-  status         PaymentStatus      @default(PENDING)
-  externalTxId   String?            @unique
-  pixQrCodeText  String?            @db.Text
-  pixQrCodeUrl   String?            @db.Text
-  paidAt         DateTime?
-  expiresAt      DateTime?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  transaction    WalletTransaction?
-
-  @@index([dealerId])
-  @@index([status])
-  @@index([externalTxId])
-}
-
-model WalletTransaction {
-  id             String          @id @default(uuid())
-  dealerId       String
-  dealer         Dealer          @relation(fields: [dealerId], references: [id], onDelete: Cascade)
-  paymentOrderId String?         @unique
-  paymentOrder   PaymentOrder?   @relation(fields: [paymentOrderId], references: [id])
-  type           TransactionType
-  amount         Decimal         @db.Decimal(10, 2)
-  balanceBefore  Decimal         @db.Decimal(10, 2)
-  balanceAfter   Decimal         @db.Decimal(10, 2)
-  description    String
-  createdAt      DateTime        @default(now())
-
-  @@index([dealerId])
-  @@index([createdAt])
+model QueryLog {
+  id        String   @id @default(uuid())
+  dealerId  String
+  dealer    Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+  plate     String   // Placa consultada
+  cost      Float    // Custo da consulta
+  createdAt DateTime @default(now())
 }

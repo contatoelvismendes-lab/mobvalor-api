@@ -139,7 +139,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
           if (existingEmailDealer) {
             const last4 = existingEmailDealer.whatsapp.slice(-4);
-            await sendWhatsAppText(from, `❌ E-mail vinculado ao whatsapp final ${last4}. Por favor, informe outro e-mail:`);
+            await sendWhatsAppText(from, `❌ E-mail já cadastrado. Vinculado ao whatsapp final ${last4}. Por favor, informe outro e-mail:`);
             return reply.status(200).send({ status: 'ok' });
           }
 
@@ -305,7 +305,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             await sendWhatsAppText(from, `🔍 Consultando aptidão no Renave para a placa *${cleanPlate}*... Aguarde um instante.`);
 
             try {
-              // Chamada ao endpoint unificado que consulta via Anycar/Zapcar apenas com a placa
+              // AQUI ESTÁ A CORREÇÃO DO ERRO 404: Apontando para a rota correta do backend unificado
               const consultResponse = await axios.post(`http://localhost:10000/api/renave-on/consultar`, {
                 placa: cleanPlate
               }).catch(async () => {

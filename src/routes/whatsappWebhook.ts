@@ -21,7 +21,7 @@ async function sendWhatsAppText(to: string, text: string) {
   );
 }
 
-// Função auxiliar para enviar botões interativos (Reply Buttons)
+// Função auxiliar para enviar botões interativos (Reply Buttons - Máximo de 3)
 async function sendWhatsAppButtons(to: string, bodyText: string, buttons: Array<{ id: string, title: string }>) {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -198,10 +198,10 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             });
             await sendWhatsAppText(from, "Cadastro concluído com sucesso! ✅ Seu número já está liberado para consultas de aptidão no Renave e histórico veicular.");
             
-            // Menu principal com foco nos serviços/preços estruturados
-            await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?\n\n• *RENAVE ON (Core)* - R$ 39,90\n• *Débitos Estaduais* - R$ 9,90\n• *Histórico de Leilão* - R$ 29,90\n• *Histórico de Sinistro* - R$ 14,90", [
-              { id: 'menu_renave', title: 'RENAVE ON (CORE)' },
-              { id: 'menu_debitos', title: 'DÉBITOS' },
+            // Menu principal otimizado
+            await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?", [
+              { id: 'menu_renave', title: 'RENAVE ON' },
+              { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
               { id: 'menu_suporte', title: 'SUPORTE' }
             ]);
           } else {
@@ -219,8 +219,19 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             return reply.status(200).send({ status: 'ok' });
           }
 
+          // Se clicou em "Outras Consultas", exibe o sub-menu com os add-ons
+          if (textContent === 'menu_outras') {
+            await sendWhatsAppButtons(from, "📦 *Outras Opções Disponíveis:*\n\n• *Débitos Estaduais* - R$ 9,90\n• *Histórico de Leilão* - R$ 29,90\n• *Histórico de Sinistro* - R$ 14,90", [
+              { id: 'menu_debitos', title: 'DÉBITOS' },
+              { id: 'menu_leilao', title: 'LEILÃO' },
+              { id: 'menu_sinistro', title: 'SINISTRO' }
+            ]);
+            return reply.status(200).send({ status: 'ok' });
+          }
+
+          // Se escolheu o Renave ou algum dos add-ons específicos
           if (textContent === 'menu_renave' || textContent === 'menu_debitos' || textContent === 'menu_leilao' || textContent === 'menu_sinistro') {
-            let nomeServico = 'RENAVE ON (Core)';
+            let nomeServico = 'Renave On';
             let valorServico = 'R$ 39,90';
 
             if (textContent === 'menu_debitos') {
@@ -250,11 +261,56 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
               data: { balance: { decrement: 1 } }
             });
 
-            await sendWhatsAppText(from, `🚀 Processando verificação para a placa *${cleanPlate}*...\n\n_Consulta executada com sucesso! (Saldo atual: ${dealer.balance - 1})_`);
+            // INTEGRAÇÃO REAL DA CONSULTA DETRAN-PE / RENAVE
+            try {
+              await sendWhatsAppText(from, `🔍 Consultando aptidão no Renave para a placa *${cleanPlate}*... Aguarde um instante.`);
+              
+              // Chamada interna para o endpoint de verificação do mobvalor-backend
+              const consultResponse = await axios.post(`http://localhost:10000/api/consultas/renave`, {
+                plate: cleanPlate,
+                dealerId: dealer.id
+              }).catch(async () => {
+                // Fallback caso chamada interna utilize rota relativa ou URL pública do Render
+                return await axios.post(`${process.env.RENDER_EXTERNAL_URL || 'https://mobvalor-api.onrender.com'}/api/consultas/renave`, {
+                  plate: cleanPlate,
+                  dealerId: dealer.id
+                });
+              });
+
+              const dadosVeiculo = consultResponse.data;
+              
+              const relatorio = `📋 *RESULTADO DA CONSULTA - RENAVE* 🏁\n\n` +
+                `• *Placa:* ${cleanPlate}\n` +
+                `• *Veículo:* ${dadosVeiculo?.modelo || 'Não informado'}\n` +
+                `• *Status Renave:* ${dadosVeiculo?.aptToRenave ? '✅ APTO PARA ENTRADA' : '❌ NÃO APTO'}\n` +
+                `• *Motivo/Restrição:* ${dadosVeiculo?.motivo || 'Nenhum impedimento crítico encontrado'}\n\n` +
+                `_Saldo atualizado: R$ ${(dealer.balance - 1).toFixed(2)}_`;
+
+              await sendWhatsAppText(from, relatorio);
+
+              // Retorna o menu principal para nova consulta
+              setTimeout(async () => {
+                await sendWhatsAppButtons(from, "Deseja realizar outra consulta?", [
+                  { id: 'menu_renave', title: 'RENAVE ON' },
+                  { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
+                  { id: 'menu_suporte', title: 'SUPORTE' }
+                ]);
+              }, 1000);
+
+            } catch (apiError) {
+              console.error('Erro na consulta externa Detran/Renave:', apiError);
+              await sendWhatsAppText(from, `⚠️ Ocorreu uma instabilidade ao consultar a placa *${cleanPlate}* junto aos órgãos oficiais. Seu saldo não foi debitado.`);
+              // Devolve o saldo caso ocorra erro na API
+              await prisma.dealer.update({
+                where: { id: dealer.id },
+                data: { balance: { increment: 1 } }
+              });
+            }
+
           } else {
-            await sendWhatsAppButtons(from, "Escolha uma das opções abaixo para o seu pátio:", [
-              { id: 'menu_renave', title: 'RENAVE ON (CORE)' },
-              { id: 'menu_debitos', title: 'DÉBITOS' },
+            await sendWhatsAppButtons(from, "Placa inválida. Qual consulta você deseja fazer?", [
+              { id: 'menu_renave', title: 'RENAVE ON' },
+              { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
               { id: 'menu_suporte', title: 'SUPORTE' }
             ]);
           }

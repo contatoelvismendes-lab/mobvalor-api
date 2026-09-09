@@ -76,14 +76,14 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       const message = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (!message) return reply.status(200).send({ status: 'ignored' });
 
-      const from = message.from; // Número do WhatsApp
+      const from = message.from; 
       const msgType = message.type;
       let textContent = '';
 
       if (msgType === 'text') {
         textContent = message.text.body.trim();
       } else if (msgType === 'interactive') {
-        textContent = message.interactive.button_reply.id; // ID do botão clicado
+        textContent = message.interactive.button_reply.id; 
       } else {
         return reply.status(200).send({ status: 'unsupported_type' });
       }
@@ -100,8 +100,8 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
           }
         });
 
-        await sendWhatsAppText(from, "Vamos lá 🏁\n\nNosso cadastro é *super simples e rápido*, como tudo o que fazemos aqui no MobValor é super.");
-        await sendWhatsAppText(from, "Qual é o seu nome?\n\n💡 _Como prefere ser chamado(a) para personalizar seu atendimento._");
+        await sendWhatsAppText(from, "Olá! Seja muito bem-vindo ao *MobValor* 🏁\n\nSomos a ferramenta definitiva para lojistas que precisam consultar o estoque com rapidez e segurança, focada principalmente em verificar se o veículo está *apto a entrar no Renave*.");
+        await sendWhatsAppText(from, "Para começarmos, qual é o seu nome?\n\n💡 _Como prefere ser chamado(a) para personalizar seu atendimento._");
         return reply.status(200).send({ status: 'ok' });
       }
 
@@ -124,7 +124,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
               where: { id: dealer.id },
               data: { registrationStep: 'WAITING_EMAIL' }
             });
-            await sendWhatsAppText(from, "Qual é o seu e-mail?\n\n💡 _Preciso do seu melhor e-mail para envio de comunicados, notas fiscais, relatórios, etc._");
+            await sendWhatsAppText(from, "Qual é o seu e-mail?\n\n💡 _Para envio de relatórios e notas._");
           } else {
             await prisma.dealer.update({
               where: { id: dealer.id },
@@ -168,7 +168,6 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             return reply.status(200).send({ status: 'ok' });
           }
 
-          // Salva os dados validados com tratamento seguro de tipos
           await prisma.dealer.update({
             where: { id: dealer.id },
             data: {
@@ -197,13 +196,13 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
               where: { id: dealer.id },
               data: { registrationStep: 'COMPLETED' }
             });
-            await sendWhatsAppText(from, "Tudo certo com seu cadastro ✅\n\nSeja muito bem-vindo(a) ao MobValor! Agora que seu cadastro foi concluído, seu WhatsApp sempre será reconhecido automaticamente.");
+            await sendWhatsAppText(from, "Cadastro concluído com sucesso! ✅ Seu número já está liberado para consultas de aptidão no Renave e histórico veicular.");
             
-            // Exibe o menu principal de consultas
-            await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?\n\n_Em caso de dúvidas, entre em contato com a nossa equipe no item \"AJUDA - SUPORTE\"_.", [
-              { id: 'menu_essencial', title: 'VEICULAR - ESSENCIAL' },
-              { id: 'menu_completa', title: 'VEICULAR - COMPLETA' },
-              { id: 'menu_suporte', title: 'AJUDA - SUPORTE' }
+            // Menu principal com foco nos serviços/preços estruturados
+            await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?\n\n• *RENAVE ON (Core)* - R$ 39,90\n• *Débitos Estaduais* - R$ 9,90\n• *Histórico de Leilão* - R$ 29,90\n• *Histórico de Sinistro* - R$ 14,90", [
+              { id: 'menu_renave', title: 'RENAVE ON (CORE)' },
+              { id: 'menu_debitos', title: 'DÉBITOS' },
+              { id: 'menu_suporte', title: 'SUPORTE' }
             ]);
           } else {
             await prisma.dealer.update({
@@ -215,38 +214,48 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
           break;
 
         case 'COMPLETED':
-          // Fluxo Principal Pós-Cadastro (Consultas ou Menus)
           if (textContent === 'menu_suporte' || textContent.toLowerCase().includes('suporte')) {
-            await sendWhatsAppText(from, "🛠️ *Central de Suporte MobValor*\n\nNossa equipe está à disposição para ajudar com créditos ou dúvidas. Descreva sua solicitação abaixo que responderemos em breve!");
+            await sendWhatsAppText(from, "🛠️ *Central de Suporte MobValor*\n\nNossa equipe está à disposição para ajudar com créditos ou dúvidas. Descreva sua solicitação abaixo!");
             return reply.status(200).send({ status: 'ok' });
           }
 
-          if (textContent === 'menu_essencial' || textContent === 'menu_completa') {
-            await sendWhatsAppText(from, "🚗 Por favor, envie a *Placa do Veículo* (ex: SNQ0E12) que deseja consultar:");
+          if (textContent === 'menu_renave' || textContent === 'menu_debitos' || textContent === 'menu_leilao' || textContent === 'menu_sinistro') {
+            let nomeServico = 'RENAVE ON (Core)';
+            let valorServico = 'R$ 39,90';
+
+            if (textContent === 'menu_debitos') {
+              nomeServico = 'Débitos Estaduais';
+              valorServico = 'R$ 9,90';
+            } else if (textContent === 'menu_leilao') {
+              nomeServico = 'Histórico de Leilão';
+              valorServico = 'R$ 29,90';
+            } else if (textContent === 'menu_sinistro') {
+              nomeServico = 'Histórico de Sinistro';
+              valorServico = 'R$ 14,90';
+            }
+
+            await sendWhatsAppText(from, `🔍 Vamos iniciar sua consulta:\n\n*Consulta:* ${nomeServico}\n*Valor:* ${valorServico}\n\nQual é a **Placa do Veículo**?\n\n💡 _Digite apenas letras e números, formato tradicional ou Mercosul: XXX0000 ou XXX1X00_`);
             return reply.status(200).send({ status: 'ok' });
           }
 
-          // Se o usuário digitou uma placa diretamente (ex: SNQ0E12)
           const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
           if (cleanPlate.length === 7) {
             if (dealer.balance <= 0) {
-              await sendWhatsAppText(from, "❌ Você não possui saldo suficiente para realizar esta consulta. Entre em contato com o suporte para recarregar.");
+              await sendWhatsAppText(from, "❌ Saldo insuficiente para realizar esta consulta. Entre em contato com o suporte para recarregar.");
               return reply.status(200).send({ status: 'ok' });
             }
 
-            // Desconta 1 crédito e realiza a consulta
             await prisma.dealer.update({
               where: { id: dealer.id },
               data: { balance: { decrement: 1 } }
             });
 
-            await sendWhatsAppText(from, `🔍 Consultando placa *${cleanPlate}*...\n\n_Processo realizado com sucesso! (Saldo atual: ${dealer.balance - 1} consultas)_`);
+            await sendWhatsAppText(from, `🚀 Processando verificação para a placa *${cleanPlate}*...\n\n_Consulta executada com sucesso! (Saldo atual: ${dealer.balance - 1})_`);
           } else {
-            // Reexibe o menu principal caso mande algo fora do padrão
-            await sendWhatsAppButtons(from, "Escolha uma das opções abaixo:", [
-              { id: 'menu_essencial', title: 'VEICULAR - ESSENCIAL' },
-              { id: 'menu_completa', title: 'VEICULAR - COMPLETA' },
-              { id: 'menu_suporte', title: 'AJUDA - SUPORTE' }
+            await sendWhatsAppButtons(from, "Escolha uma das opções abaixo para o seu pátio:", [
+              { id: 'menu_renave', title: 'RENAVE ON (CORE)' },
+              { id: 'menu_debitos', title: 'DÉBITOS' },
+              { id: 'menu_suporte', title: 'SUPORTE' }
             ]);
           }
           break;

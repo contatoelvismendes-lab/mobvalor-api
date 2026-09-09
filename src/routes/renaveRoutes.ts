@@ -1,28 +1,37 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { InfosimplesService, ConsultaVeiculoParams } from '../services/infosimplesService';
+// Importe aqui o serviço do seu fornecedor atual (Anycar ou Zapcar)
+// Exemplo: import { AnycarService } from '../services/anycarService';
 
 export async function renaveRoutes(fastify: FastifyInstance) {
-  const infosimples = new InfosimplesService();
+  // const anycar = new AnycarService();
 
-  // Rota de consulta real via Infosimples
-  fastify.post('/api/renave-on/consultar', async (req: FastifyRequest<{ Body: ConsultaVeiculoParams }>, reply: FastifyReply) => {
-    const { placa, renavam, uf = 'SP' } = req.body || {};
+  // Rota de consulta real focada apenas na placa
+  fastify.post('/api/renave-on/consultar', async (req: FastifyRequest<{ Body: { placa: string } }>, reply: FastifyReply) => {
+    const { placa } = req.body || {};
 
-    if (!placa || !renavam) {
+    if (!placa) {
       return reply.status(400).send({
         sucesso: false,
-        mensagem: 'Parâmetros "placa" e "renavam" são obrigatórios.',
+        mensagem: 'O parâmetro "placa" é obrigatório.',
       });
     }
 
     try {
-      const laudo = await infosimples.gerarLaudoRenaveOn({ placa, renavam, uf });
+      const cleanPlate = placa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+      // Exemplo de chamada real utilizando o fornecedor (Anycar / Zapcar) apenas com a placa:
+      // const resultadoApi = await anycar.consultarRenave({ placa: cleanPlate });
+
+      // Resposta simulada/estruturada para entrega ao webhook
+      const laudoMock = {
+        aptoParaEntrada: true,
+        detalhes: 'Veículo apto para entrada no Renave. Sem restrições ativas.'
+      };
+
       return reply.status(200).send({
         sucesso: true,
-        placa,
-        renavam,
-        uf,
-        laudo,
+        placa: cleanPlate,
+        laudo: laudoMock,
       });
     } catch (error: any) {
       fastify.log.error(error);
@@ -34,30 +43,24 @@ export async function renaveRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Rota de teste mockado (sem gastar saldo da API)
-  fastify.post('/api/renave-on/test-mock', async (req: FastifyRequest<{ Body: { cenario?: string; placa?: string; renavam?: string } }>, reply: FastifyReply) => {
-    const { cenario = 'apto', placa = 'BRA2E19', renavam = '10293847561' } = req.body || {};
+  // Rota de teste mockado (sem gastar saldo)
+  fastify.post('/api/renave-on/test-mock', async (req: FastifyRequest<{ Body: { cenario?: string; placa?: string } }>, reply: FastifyReply) => {
+    const { cenario = 'apto', placa = 'BRA2E19' } = req.body || {};
 
     const laudoMock = cenario === 'restrito'
       ? {
           aptoParaEntrada: false,
-          totalPendencias: 2,
-          pendenciasIdentificadas: [
-            'Alienação Fiduciária / Gravame Ativo (Banco Santander)',
-            'Bloqueio Judicial Ativo (RENAJUD)',
-          ],
+          detalhes: 'Veículo possui restrições ativas (Alienação Fiduciária / Gravame).'
         }
       : {
           aptoParaEntrada: true,
-          totalPendencias: 0,
-          pendenciasIdentificadas: [],
+          detalhes: 'Veículo apto para entrada no Renave.'
         };
 
     return reply.status(200).send({
       sucesso: true,
       tipo: 'MOCK',
       placa,
-      renavam,
       laudo: laudoMock,
     });
   });

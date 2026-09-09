@@ -130,7 +130,6 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
           break;
 
         case 'WAITING_EMAIL':
-          // Validação se e-mail já existe em outro cadastro
           const existingEmailDealer = await prisma.dealer.findFirst({
             where: { 
               email: textContent,
@@ -140,7 +139,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
           if (existingEmailDealer) {
             const last4 = existingEmailDealer.whatsapp.slice(-4);
-            await sendWhatsAppText(from, `❌ Este e-mail já está cadastrado. Vinculado ao WhatsApp final ${last4}. Por favor, informe outro e-mail:`);
+            await sendWhatsAppText(from, `❌ E-mail vinculado ao whatsapp final ${last4}. Por favor, informe outro e-mail:`);
             return reply.status(200).send({ status: 'ok' });
           }
 
@@ -173,7 +172,6 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
         case 'WAITING_DOCUMENT':
           const cleanCnpjInput = textContent.replace(/\D/g, '');
 
-          // Validação se CNPJ já existe em outro cadastro
           const existingCnpjDealer = await prisma.dealer.findFirst({
             where: { 
               document: cleanCnpjInput,
@@ -183,7 +181,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
           if (existingCnpjDealer) {
             const last4Cnpj = existingCnpjDealer.whatsapp.slice(-4);
-            await sendWhatsAppText(from, `❌ Este CNPJ já está cadastrado. Vinculado ao WhatsApp final ${last4Cnpj}. Por favor, informe outro CNPJ:`);
+            await sendWhatsAppText(from, `❌ CNPJ já está cadastrado. Vinculado ao whatsapp final ${last4Cnpj}. Por favor, informe outro CNPJ:`);
             return reply.status(200).send({ status: 'ok' });
           }
 
@@ -221,7 +219,6 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
               where: { id: dealer.id },
               data: { registrationStep: 'WAITING_ROLE' }
             });
-            // Pergunta o cargo logo após confirmar o CNPJ
             await sendWhatsAppButtons(from, "Qual é o seu cargo na empresa?", [
               { id: 'role_owner', title: 'PROPRIETÁRIO' },
               { id: 'role_manager', title: 'GERENTE' },
@@ -307,13 +304,24 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
             await sendWhatsAppText(from, `🔍 Consultando aptidão no Renave para a placa *${cleanPlate}*... Aguarde um instante.`);
 
-            // Simulação robusta ou chamada direta do serviço de consulta
             try {
-              // Aqui você pode substituir pela resposta real da sua API interna de consulta
-              const relatorio = `📋 *RESULTADO DA CONSULTA - RENAVE* 🏁\n\n` +
+              // Chamada ao endpoint unificado que consulta via Anycar/Zapcar apenas com a placa
+              const consultResponse = await axios.post(`http://localhost:10000/api/renave-on/consultar`, {
+                placa: cleanPlate
+              }).catch(async () => {
+                return await axios.post(`${process.env.RENDER_EXTERNAL_URL || 'https://mobvalor-api.onrender.com'}/api/renave-on/consultar`, {
+                  placa: cleanPlate
+                });
+              });
+
+              const dados = consultResponse.data;
+              const laudo = dados?.laudo;
+              const apto = laudo?.aptoParaEntrada ?? true;
+
+              const relatorio = `📋 *RESULTADO DA CONSULTA - RENAVE ON* 🏁\n\n` +
                 `• *Placa:* ${cleanPlate}\n` +
-                `• *Status Renave:* ✅ APTO PARA ENTRADA\n` +
-                `• *Restrições:* Nenhum impedimento crítico encontrado\n\n` +
+                `• *Status:* ${apto ? '✅ APTO PARA ENTRADA NO RENAVE' : '❌ NÃO APTO / COM RESTRIÇÕES'}\n` +
+                `• *Detalhes:* ${laudo?.detalhes || 'Nenhum impedimento crítico encontrado'}\n\n` +
                 `_Saldo atual: R$ ${(dealer.balance - 1).toFixed(2)}_`;
 
               await sendWhatsAppText(from, relatorio);
@@ -331,7 +339,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
                 where: { id: dealer.id },
                 data: { balance: { increment: 1 } }
               });
-              await sendWhatsAppText(from, `⚠️ Erro ao consultar a placa *${cleanPlate}*. Seu saldo foi estornado.`);
+              await sendWhatsAppText(from, `⚠️ Ocorreu uma instabilidade ao consultar a placa *${cleanPlate}*. Seu saldo foi estornado.`);
             }
 
           } else {

@@ -66,6 +66,30 @@ async function fetchCompanyData(cnpj: string) {
 }
 
 export async function whatsappWebhookRoutes(app: FastifyInstance) {
+  // Validação do webhook (GET) - Facebook envia desafio aqui
+  app.get('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
+    const verifyToken = process.env.META_VERIFY_TOKEN;
+    const query: any = request.query;
+
+    const mode = query['hub.mode'];
+    const token = query['hub.verify_token'];
+    const challenge = query['hub.challenge'];
+
+    console.log('🔍 Webhook validation received:');
+    console.log(`   Mode: ${mode}`);
+    console.log(`   Token match: ${token === verifyToken}`);
+    console.log(`   Challenge: ${challenge?.slice(0, 10)}...`);
+
+    if (mode === 'subscribe' && token === verifyToken) {
+      console.log('✅ Webhook validado com sucesso!');
+      return reply.status(200).send(challenge);
+    }
+
+    console.error('❌ Erro ao validar webhook - Token inválido ou mode != subscribe');
+    return reply.status(403).send({ error: 'Validation failed' });
+  });
+
+  // Recebimento de mensagens (POST)
   app.post('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
     const body: any = request.body;
 

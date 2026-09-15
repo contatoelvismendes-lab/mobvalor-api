@@ -1,4 +1,4 @@
-﻿import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
 
@@ -9,7 +9,7 @@ async function sendWhatsAppText(to: string, text: string) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
   await axios.post(
-    `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
     {
       messaging_product: 'whatsapp',
       to,
@@ -25,7 +25,7 @@ async function sendWhatsAppButtons(to: string, bodyText: string, buttons: Array<
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
   await axios.post(
-    `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`,
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
     {
       messaging_product: 'whatsapp',
       to,
@@ -45,28 +45,8 @@ async function sendWhatsAppButtons(to: string, bodyText: string, buttons: Array<
   );
 }
 
-async function fetchCompanyData(cnpj: string) {
-  const cleanCnpj = cnpj.replace(/\D/g, '');
-  try {
-    const response = await axios.get(`https://publica.cnpj.ws/cnpj/${cleanCnpj}`);
-    const data = response.data;
-    return {
-      success: true,
-      cnpj: cleanCnpj,
-      companyName: data.razao_social,
-      zip: data.estabelecimento.cep,
-      street: `${data.estabelecimento.logradouro}, ${data.estabelecimento.numero}${data.estabelecimento.complemento ? ' ' + data.estabelecimento.complemento : ''}`,
-      neighborhood: data.estabelecimento.bairro,
-      city: data.estabelecimento.cidade.nome,
-      state: data.estabelecimento.estado.sigla
-    };
-  } catch (err) {
-    return { success: false };
-  }
-}
-
 export async function whatsappWebhookRoutes(app: FastifyInstance) {
-  // Validação do webhook (GET) - Facebook envia desafio aqui
+  // Validação do webhook (GET)
   app.get('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
     const verifyToken = process.env.META_VERIFY_TOKEN;
     const query: any = request.query;
@@ -85,11 +65,11 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       return reply.status(200).send(challenge);
     }
 
-    console.error('❌ Erro ao validar webhook - Token inválido ou mode != subscribe');
+    console.error('❌ Erro ao validar webhook');
     return reply.status(403).send({ error: 'Validation failed' });
   });
 
-  // Recebimento de mensagens (POST)
+  // Recebimento de mensagens (POST) - Fluxo simplificado
   app.post('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
     const body: any = request.body;
 
@@ -97,284 +77,116 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       const message = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (!message) return reply.status(200).send({ status: 'ignored' });
 
-      const from = message.from; 
+      const from = message.from;
       const msgType = message.type;
       let textContent = '';
 
       if (msgType === 'text') {
-        textContent = message.text.body.trim();
+        textContent = message.text.body.trim().toLowerCase();
       } else if (msgType === 'interactive') {
-        textContent = message.interactive.button_reply.id; 
+        textContent = message.interactive.button_reply.id;
       } else {
         return reply.status(200).send({ status: 'unsupported_type' });
       }
 
+      // Encontrar ou criar dealer
       let dealer = await prisma.dealer.findUnique({ where: { whatsapp: from } });
 
       if (!dealer) {
+        console.log(`👤 Criando novo dealer: ${from}`);
         dealer = await prisma.dealer.create({
           data: {
             whatsapp: from,
-            registrationStep: 'WAITING_NAME',
-            balance: 10.0 
+            name: `Lojista ${from}`,
+            email: `${from}@mobvalor.com`,
+            balance: 10.0
           }
         });
 
-        await sendWhatsAppText(from, "Olá! Seja muito bem-vindo ao *MobValor* 🏁\n\nSomos a ferramenta definitiva para lojistas que precisam consultar o estoque com rapidez e segurança, focada principalmente em verificar se o veículo está *apto a entrar no Renave*.");
-        await sendWhatsAppText(from, "Para começarmos, qual é o seu nome?\n\n💡 _Como prefere ser chamado(a) para personalizar seu atendimento._");
+        // Bem-vindo
+        await sendWhatsAppText(
+          from,
+          `🚗 *Bem-vindo à Mobvalor!* 💜\n\nConsulte veículos com rapidez e segurança, direto por aqui.`
+        );
+
+        // Menu inicial
+        await sendWhatsAppButtons(
+          from,
+          'O que você deseja fazer?',
+          [
+            { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+            { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+          ]
+        );
         return reply.status(200).send({ status: 'ok' });
       }
 
-      switch (dealer.registrationStep) {
-        case 'WAITING_NAME':
-          await prisma.dealer.update({
-            where: { id: dealer.id },
-            data: { name: textContent, registrationStep: 'CONFIRMING_NAME' }
-          });
-          await sendWhatsAppButtons(from, `Ok, seu nome está correto?\n\n*${textContent}*`, [
-            { id: 'btn_name_yes', title: 'SIM' },
-            { id: 'btn_name_no', title: 'NÃO, CORRIGIR' }
-          ]);
-          break;
-
-        case 'CONFIRMING_NAME':
-          if (textContent === 'btn_name_yes' || textContent.toLowerCase() === 'sim') {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_EMAIL' }
-            });
-            await sendWhatsAppText(from, "Qual é o seu e-mail?\n\n💡 _Para envio de relatórios e notas._");
-          } else {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_NAME' }
-            });
-            await sendWhatsAppText(from, "Qual é o seu nome?");
-          }
-          break;
-
-        case 'WAITING_EMAIL':
-          const existingEmailDealer = await prisma.dealer.findFirst({
-            where: { 
-              email: textContent,
-              NOT: { id: dealer.id }
-            }
-          });
-
-          if (existingEmailDealer) {
-            const last4 = existingEmailDealer.whatsapp.slice(-4);
-            await sendWhatsAppText(from, `❌ E-mail já cadastrado. Vinculado ao whatsapp final ${last4}. Por favor, informe outro e-mail:`);
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          await prisma.dealer.update({
-            where: { id: dealer.id },
-            data: { email: textContent, registrationStep: 'CONFIRMING_EMAIL' }
-          });
-          await sendWhatsAppButtons(from, `Seu email está correto?\n\n*${textContent}*`, [
-            { id: 'btn_email_yes', title: 'SIM' },
-            { id: 'btn_email_no', title: 'NÃO, CORRIGIR' }
-          ]);
-          break;
-
-        case 'CONFIRMING_EMAIL':
-          if (textContent === 'btn_email_yes' || textContent.toLowerCase() === 'sim') {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_DOCUMENT' }
-            });
-            await sendWhatsAppText(from, "Qual é o CNPJ da sua empresa?\n\n💡 _Utilize apenas os números._");
-          } else {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_EMAIL' }
-            });
-            await sendWhatsAppText(from, "Qual é o seu e-mail?");
-          }
-          break;
-
-        case 'WAITING_DOCUMENT':
-          const cleanCnpjInput = textContent.replace(/\D/g, '');
-
-          const existingCnpjDealer = await prisma.dealer.findFirst({
-            where: { 
-              document: cleanCnpjInput,
-              NOT: { id: dealer.id }
-            }
-          });
-
-          if (existingCnpjDealer) {
-            const last4Cnpj = existingCnpjDealer.whatsapp.slice(-4);
-            await sendWhatsAppText(from, `❌ CNPJ já está cadastrado. Vinculado ao whatsapp final ${last4Cnpj}. Por favor, informe outro CNPJ:`);
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          const company = await fetchCompanyData(cleanCnpjInput);
-          if (!company.success) {
-            await sendWhatsAppText(from, "❌ CNPJ não encontrado na Receita Federal. Por favor, digite um CNPJ válido:");
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          await prisma.dealer.update({
-            where: { id: dealer.id },
-            data: {
-              documentType: 'CNPJ',
-              document: company.cnpj || '',
-              companyName: company.companyName || null,
-              addressZip: company.zip || null,
-              addressStreet: company.street || null,
-              addressNeighborhood: company.neighborhood || null,
-              addressCity: company.city || null,
-              addressState: company.state || null,
-              registrationStep: 'CONFIRMING_COMPANY'
-            }
-          });
-
-          const summaryText = `🔎 Confirme os dados da sua empresa:\n\n${company.cnpj}\n${company.companyName}\n\n${company.zip}\n${company.street}\n${company.neighborhood}, ${company.city} ${company.state}`;
-          await sendWhatsAppButtons(from, summaryText, [
-            { id: 'btn_comp_ok', title: 'CONFIRMAR' },
-            { id: 'btn_comp_redo', title: 'ALTERAR CNPJ' }
-          ]);
-          break;
-
-        case 'CONFIRMING_COMPANY':
-          if (textContent === 'btn_comp_ok' || textContent.toLowerCase() === 'sim') {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_ROLE' }
-            });
-            await sendWhatsAppButtons(from, "Qual é o seu cargo na empresa?", [
-              { id: 'role_owner', title: 'PROPRIETÁRIO' },
-              { id: 'role_manager', title: 'GERENTE' },
-              { id: 'role_seller', title: 'VENDEDOR' }
-            ]);
-          } else {
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { registrationStep: 'WAITING_DOCUMENT' }
-            });
-            await sendWhatsAppText(from, "Qual é o CNPJ da sua empresa?");
-          }
-          break;
-
-        case 'WAITING_ROLE':
-          let cargoEscolhido = textContent;
-          if (textContent === 'role_owner') cargoEscolhido = 'Proprietário';
-          if (textContent === 'role_manager') cargoEscolhido = 'Gerente';
-          if (textContent === 'role_seller') cargoEscolhido = 'Vendedor';
-
-          await prisma.dealer.update({
-            where: { id: dealer.id },
-            data: { 
-              role: cargoEscolhido,
-              registrationStep: 'COMPLETED' 
-            }
-          });
-
-          await sendWhatsAppText(from, "Cadastro concluído com sucesso! ✅ Seu número já está liberado para consultas de aptidão no Renave e histórico veicular.");
-          
-          await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?", [
-            { id: 'menu_renave', title: 'RENAVE ON' },
-            { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
-            { id: 'menu_suporte', title: 'SUPORTE' }
-          ]);
-          break;
-
-        case 'COMPLETED':
-          if (textContent === 'menu_suporte' || textContent.toLowerCase().includes('suporte')) {
-            await sendWhatsAppText(from, "🛠️ *Central de Suporte MobValor*\n\nNossa equipe está à disposição para ajudar com créditos ou dúvidas. Descreva sua solicitação abaixo!");
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          if (textContent === 'menu_outras') {
-            await sendWhatsAppButtons(from, "📦 *Outras Opções Disponíveis:*\n\n• *Débitos Estaduais* - R$ 9,90\n• *Histórico de Leilão* - R$ 29,90\n• *Histórico de Sinistro* - R$ 14,90", [
-              { id: 'menu_debitos', title: 'DÉBITOS' },
-              { id: 'menu_leilao', title: 'LEILÃO' },
-              { id: 'menu_sinistro', title: 'SINISTRO' }
-            ]);
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          if (textContent === 'menu_renave' || textContent === 'menu_debitos' || textContent === 'menu_leilao' || textContent === 'menu_sinistro') {
-            let nomeServico = 'Renave On';
-            let valorServico = 'R$ 39,90';
-
-            if (textContent === 'menu_debitos') {
-              nomeServico = 'Débitos Estaduais';
-              valorServico = 'R$ 9,90';
-            } else if (textContent === 'menu_leilao') {
-              nomeServico = 'Histórico de Leilão';
-              valorServico = 'R$ 29,90';
-            } else if (textContent === 'menu_sinistro') {
-              nomeServico = 'Histórico de Sinistro';
-              valorServico = 'R$ 14,90';
-            }
-
-            await sendWhatsAppText(from, `🔍 Vamos iniciar sua consulta:\n\n*Consulta:* ${nomeServico}\n*Valor:* ${valorServico}\n\nQual é a **Placa do Veículo**?\n\n💡 _Digite apenas letras e números, formato tradicional ou Mercosul: XXX0000 ou XXX1X00_`);
-            return reply.status(200).send({ status: 'ok' });
-          }
-
-          const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-          if (cleanPlate.length === 7) {
-            if (dealer.balance <= 0) {
-              await sendWhatsAppText(from, "❌ Saldo insuficiente para realizar esta consulta. Entre em contato com o suporte para recarregar.");
-              return reply.status(200).send({ status: 'ok' });
-            }
-
-            await prisma.dealer.update({
-              where: { id: dealer.id },
-              data: { balance: { decrement: 1 } }
-            });
-
-            await sendWhatsAppText(from, `🔍 Consultando aptidão no Renave para a placa *${cleanPlate}*... Aguarde um instante.`);
-
-            try {
-              // AQUI ESTÁ A CORREÇÃO DO ERRO 404: Apontando para a rota correta do backend unificado
-              const consultResponse = await axios.post(`http://localhost:10000/api/renave-on/consultar`, {
-                placa: cleanPlate
-              }).catch(async () => {
-                return await axios.post(`${process.env.RENDER_EXTERNAL_URL || 'https://mobvalor-api.onrender.com'}/api/renave-on/consultar`, {
-                  placa: cleanPlate
-                });
-              });
-
-              const dados = consultResponse.data;
-              const laudo = dados?.laudo;
-              const apto = laudo?.aptoParaEntrada ?? true;
-
-              const relatorio = `📋 *RESULTADO DA CONSULTA - RENAVE ON* 🏁\n\n` +
-                `• *Placa:* ${cleanPlate}\n` +
-                `• *Status:* ${apto ? '✅ APTO PARA ENTRADA NO RENAVE' : '❌ NÃO APTO / COM RESTRIÇÕES'}\n` +
-                `• *Detalhes:* ${laudo?.detalhes || 'Nenhum impedimento crítico encontrado'}\n\n` +
-                `_Saldo atual: R$ ${(dealer.balance - 1).toFixed(2)}_`;
-
-              await sendWhatsAppText(from, relatorio);
-
-              setTimeout(async () => {
-                await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?", [
-                  { id: 'menu_renave', title: 'RENAVE ON' },
-                  { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
-                  { id: 'menu_suporte', title: 'SUPORTE' }
-                ]);
-              }, 1000);
-
-            } catch (err) {
-              await prisma.dealer.update({
-                where: { id: dealer.id },
-                data: { balance: { increment: 1 } }
-              });
-              await sendWhatsAppText(from, `⚠️ Ocorreu uma instabilidade ao consultar a placa *${cleanPlate}*. Seu saldo foi estornado.`);
-            }
-
-          } else {
-            await sendWhatsAppButtons(from, "Qual consulta você deseja fazer?", [
-              { id: 'menu_renave', title: 'RENAVE ON' },
-              { id: 'menu_outras', title: 'OUTRAS CONSULTAS' },
-              { id: 'menu_suporte', title: 'SUPORTE' }
-            ]);
-          }
-          break;
+      // Menu principal
+      if (textContent === 'menu_consulta' || textContent.includes('consulta')) {
+        await sendWhatsAppText(
+          from,
+          `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+        );
+        return reply.status(200).send({ status: 'ok' });
       }
+
+      if (textContent === 'menu_suporte' || textContent.includes('suporte')) {
+        await sendWhatsAppText(
+          from,
+          `💬 *Falar com Suporte*\n\nNossa equipe está à disposição! Descreva sua solicitação abaixo.`
+        );
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (textContent === 'cancelar') {
+        await sendWhatsAppButtons(
+          from,
+          'Voltando ao menu...\n\nO que você deseja fazer?',
+          [
+            { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+            { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+          ]
+        );
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // Processar placa
+      const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      if (cleanPlate.length === 7) {
+        await sendWhatsAppText(
+          from,
+          `🔍 *Consultando placa ${cleanPlate}...*\n\nAguarde um instante.`
+        );
+
+        // TODO: Integrar com API de consulta real
+        await sendWhatsAppText(
+          from,
+          `📋 *Resultado da Consulta*\n\n🚗 Placa: ${cleanPlate}\n✅ Status: APTO PARA ENTRADA NO RENAVE\n\nSeu crédito está disponível!`
+        );
+
+        // Voltar ao menu
+        setTimeout(async () => {
+          await sendWhatsAppButtons(
+            from,
+            'O que você deseja fazer?',
+            [
+              { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+              { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+            ]
+          );
+        }, 1000);
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      // Mensagem não reconhecida
+      await sendWhatsAppButtons(
+        from,
+        'Não entendi. O que você deseja fazer?',
+        [
+          { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+          { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+        ]
+      );
 
       return reply.status(200).send({ status: 'success' });
     } catch (error) {

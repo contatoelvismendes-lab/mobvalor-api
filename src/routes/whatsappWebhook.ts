@@ -234,6 +234,89 @@ async function handlePlateReceivedState(from: string, textContent: string) {
   return false;
 }
 
+async function handleWaitingRegistrationState(from: string, textContent: string, dealer: any) {
+  console.log(`📋 HANDLER: Waiting Registration State`);
+
+  // Validar CNPJ/CPF (simplificado: 11 ou 14 dígitos)
+  const cleanDocument = textContent.replace(/\D/g, '');
+
+  if (cleanDocument.length !== 11 && cleanDocument.length !== 14) {
+    console.log(`❌ Documento inválido (${cleanDocument.length} dígitos)`);
+    await sendWhatsAppText(
+      from,
+      `❌ *Documento inválido!*\n\n📝 Envie um CPF (11 dígitos) ou CNPJ (14 dígitos)\n\nEx: 12345678901 ou 12345678901234`
+    );
+    console.log(`📤 Enviado: Pedindo documento válido\n`);
+    return true;
+  }
+
+  // Salvar documento
+  console.log(`✅ Documento válido: ${cleanDocument}`);
+  await prisma.dealer.update({
+    where: { whatsapp: from },
+    data: {
+      document: cleanDocument,
+      documentType: cleanDocument.length === 11 ? 'CPF' : 'CNPJ',
+      context_data: { ...dealer.context_data, awaiting_email: true }
+    }
+  });
+
+  await sendWhatsAppText(
+    from,
+    `✅ *Documento recebido!*\n\nAgora preciso do seu **email** para continuar.\n\n📧 *Envie um email válido*`
+  );
+  console.log(`📤 Enviado: Pedindo email\n`);
+  return true;
+}
+
+async function handleAwaitingEmailState(from: string, textContent: string, dealer: any) {
+  console.log(`📋 HANDLER: Awaiting Email State`);
+
+  // Validar email simples
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(textContent)) {
+    console.log(`❌ Email inválido`);
+    await sendWhatsAppText(
+      from,
+      `❌ *Email inválido!*\n\n📧 Envie um email válido\n\nEx: seu@email.com`
+    );
+    console.log(`📤 Enviado: Pedindo email válido\n`);
+    return true;
+  }
+
+  // Salvar email
+  console.log(`✅ Email válido: ${textContent}`);
+  await prisma.dealer.update({
+    where: { whatsapp: from },
+    data: {
+      email: textContent,
+      context_data: {}
+    }
+  });
+
+  await sendWhatsAppText(
+    from,
+    `✅ *Cadastro completo!*\n\n✔️ Documento: ${dealer.document}\n✔️ Email: ${textContent}\n\n🎉 Agora você pode fazer consultas!`
+  );
+  console.log(`📤 Enviado: Cadastro concluído`);
+
+  setTimeout(async () => {
+    await DealerStateManager.resetToMenu(from);
+    await sendWhatsAppButtons(
+      from,
+      'O que você deseja fazer?',
+      [
+        { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+        { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+      ]
+    );
+    console.log(`📤 Enviado: Voltando ao menu\n`);
+  }, 1500);
+
+  return true;
+}
+
 // ============= WEBHOOK ROUTES =============
 
 export async function whatsappWebhookRoutes(app: FastifyInstance) {
@@ -339,6 +422,18 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
       if (currentState === DealerState.PLATE_RECEIVED) {
         const handled = await handlePlateReceivedState(from, textContent);
+        if (handled) return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (currentState === DealerState.WAITING_REGISTRATION) {
+        const handled = await handleWaitingRegistrationState(from, textContent, dealer);
+        if (handled) return reply.status(200).send({ status: 'ok' });
+      }
+
+      // Verificar se está aguardando email (salvo em context_data)
+      const contextData = dealer.context_data as any;
+      if (contextData && contextData.awaiting_email) {
+        const handled = await handleAwaitingEmailState(from, textContent, dealer);
         if (handled) return reply.status(200).send({ status: 'ok' });
       }
 

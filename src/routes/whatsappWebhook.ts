@@ -467,7 +467,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
           data: {
             whatsapp: from,
             name: `Lojista ${from}`,
-            email: `${from}@mobvalor.com`,
+            email: null,
             balance: 10.0,
             state: DealerState.MENU
           }

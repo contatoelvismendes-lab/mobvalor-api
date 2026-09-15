@@ -138,6 +138,33 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
         return reply.status(200).send({ status: 'ok' });
       }
 
+      if (textContent === 'efetuar_consulta') {
+        await sendWhatsAppText(
+          from,
+          `✅ *Consulta Confirmada!*\n\nSeu crédito foi debitado no valor de R$ 47,90.\n\n📋 A análise será processada em breve. Você receberá o resultado em alguns minutos!\n\n💜 Obrigado por usar a Mobvalor!`
+        );
+
+        setTimeout(async () => {
+          await sendWhatsAppButtons(
+            from,
+            'O que você deseja fazer?',
+            [
+              { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+              { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+            ]
+          );
+        }, 1500);
+        return reply.status(200).send({ status: 'ok' });
+      }
+
+      if (textContent === 'outras_consultas') {
+        await sendWhatsAppText(
+          from,
+          `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+        );
+        return reply.status(200).send({ status: 'ok' });
+      }
+
       if (textContent === 'cancelar') {
         await sendWhatsAppButtons(
           from,
@@ -163,17 +190,18 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
         await sendWhatsAppText(from, consultaMessage);
 
-        // Voltar ao menu
+        // Botões de ação
         setTimeout(async () => {
           await sendWhatsAppButtons(
             from,
             'O que você deseja fazer?',
             [
-              { id: 'menu_consulta', title: '🔍 Nova Consulta' },
-              { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+              { id: 'efetuar_consulta', title: '✅ Efetuar Consulta' },
+              { id: 'outras_consultas', title: '🔍 Outras Consultas' },
+              { id: 'cancelar', title: '❌ Cancelar' }
             ]
           );
-        }, 1000);
+        }, 1500);
         return reply.status(200).send({ status: 'ok' });
       }
 

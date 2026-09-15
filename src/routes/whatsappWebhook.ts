@@ -159,10 +159,9 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
         );
 
         // TODO: Integrar com API de consulta real
-        await sendWhatsAppText(
-          from,
-          `📋 *Resultado da Consulta*\n\n🚗 Placa: ${cleanPlate}\n✅ Status: APTO PARA ENTRADA NO RENAVE\n\nSeu crédito está disponível!`
-        );
+        const consultaMessage = `✅ Placa ${cleanPlate} recebida!\n\n💎 *Consulta Completa — R$ 47,90*\n\nO que está incluído:\n✅ Informações Cadastrais\n✅ Identificação Técnica\n✅ Histórico de Proprietários\n✅ Débitos\n✅ Restrições Judiciais\n✅ Roubo e Furto\n✅ Gravame\n✅ Alienações\n✅ Sinistros\n✅ Recalls\n✅ Registro em Locadora\n✅ Aceitação em Seguradoras\n✅ Score do Veículo\n✅ Histórico de KM\n✅ Diversas Informações`;
+
+        await sendWhatsAppText(from, consultaMessage);
 
         // Voltar ao menu
         setTimeout(async () => {

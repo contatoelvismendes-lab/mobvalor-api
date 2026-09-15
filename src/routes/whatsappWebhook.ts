@@ -146,11 +146,24 @@ async function handleWaitingPlateState(from: string, textContent: string) {
   // Placa inválida
   if (cleanPlate.length === 7 || (cleanPlate.length > 0 && !validateBrazilianLicense(textContent))) {
     console.log(`❌ Placa inválida: ${textContent}`);
+
     await sendWhatsAppText(
       from,
-      `❌ *Placa inválida!*\n\nOs formatos aceitos são:\n\n📋 *Padrão:* ABC-1234 (3 letras + 4 números)\n📋 *Mercosul:* ABC1D23 (3 letras + 1 número + 1 letra + 2 números)\n\nTente novamente com o formato correto.\n\n💡 Ou digite *cancelar* para voltar ao menu.`
+      `❌ *Placa inválida!*\n\nOs formatos aceitos são:\n\n📋 *Padrão:* ABC-1234 (3 letras + 4 números)\n📋 *Mercosul:* ABC1D23 (3 letras + 1 número + 1 letra + 2 números)\n\nTente novamente com o formato correto.`
     );
-    console.log(`📤 Enviado: Aviso de placa inválida\n`);
+
+    setTimeout(async () => {
+      await sendWhatsAppButtons(
+        from,
+        'O que você deseja fazer?',
+        [
+          { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+          { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+        ]
+      );
+      console.log(`📤 Enviado: Botões após placa inválida\n`);
+    }, 500);
+
     return true;
   }
 

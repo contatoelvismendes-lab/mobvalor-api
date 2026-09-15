@@ -143,6 +143,19 @@ async function handlePlateReceivedState(from: string, textContent: string) {
     return false;
   }
 
+  // Nova Consulta / Outras Consultas (voltar a pedir placa)
+  if (textContent === 'menu_consulta' || textContent === 'outras_consultas') {
+    console.log(`🔄 Outras Consultas solicitadas`);
+    await DealerStateManager.setState(from, DealerState.WAITING_PLATE);
+
+    await sendWhatsAppText(
+      from,
+      `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+    );
+    console.log(`📤 Enviado: Pedindo nova placa\n`);
+    return true;
+  }
+
   // Efetuar Consulta
   if (textContent === 'efetuar_consulta') {
     console.log(`✅ AÇÃO: Efetuar Consulta solicitada`);
@@ -166,9 +179,19 @@ async function handlePlateReceivedState(from: string, textContent: string) {
 
       await sendWhatsAppText(
         from,
-        `💰 *Saldo Insuficiente!*\n\nVocê tem: R$ ${dealer.balance.toFixed(2)}\nNecessário: R$ 47,90\n\n*Deseja fazer uma recarga?* Digite *recarga* ou *cancelar*`
+        `💰 *Saldo Insuficiente!*\n\nVocê tem: R$ ${dealer.balance.toFixed(2)}\nNecessário: R$ 47,90`
       );
-      console.log(`📤 Enviado: Pedindo recarga\n`);
+
+      await sendWhatsAppButtons(
+        from,
+        'O que você deseja fazer?',
+        [
+          { id: 'fazer_recarga', title: '💳 Fazer Recarga' },
+          { id: 'menu_suporte', title: '💬 Suporte' },
+          { id: 'voltar_menu', title: '⬅️ Menu Anterior' }
+        ]
+      );
+      console.log(`📤 Enviado: Botões de saldo insuficiente\n`);
       return true;
     }
 

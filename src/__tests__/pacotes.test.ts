@@ -4,12 +4,15 @@ import { prisma } from '../lib/prisma';
 
 describe('PacoteService', () => {
   const pacoteMock = {
+    id: 'pacote-123',
     nome: 'Pacote Premium',
     descricao: 'Pacote com 100 consultas',
     preco: 199.99,
     consultas: 100,
     duracao: 30,
     ativo: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
   let pacoteId: string;

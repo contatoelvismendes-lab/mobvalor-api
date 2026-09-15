@@ -3,8 +3,9 @@ import { CriarPacote, AtualizarPacote } from '../schemas/zod';
 
 export class PacoteService {
   static async listarPacotes(ativo?: boolean) {
+    const where = ativo !== undefined ? { ativo } : {};
     return prisma.pacote.findMany({
-      where: ativo !== undefined ? { ativo } : undefined,
+      where,
       orderBy: { preco: 'asc' },
     });
   }
@@ -25,7 +26,7 @@ export class PacoteService {
     return prisma.pacote.create({
       data: {
         nome: dados.nome,
-        descricao: dados.descricao,
+        descricao: dados.descricao || null,
         preco: dados.preco,
         consultas: dados.consultas,
         duracao: dados.duracao,

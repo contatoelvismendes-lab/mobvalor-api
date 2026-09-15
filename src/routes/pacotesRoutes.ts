@@ -5,7 +5,7 @@ import { criarPacoteSchema, atualizarPacoteSchema } from '../schemas/zod';
 export async function pacotesRoutes(fastify: FastifyInstance) {
   fastify.get('/pacotes', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const ativo = request.query.ativo ? request.query.ativo === 'true' : undefined;
+      const ativo = (request.query as any).ativo ? (request.query as any).ativo === 'true' : undefined;
       const pacotes = await PacoteService.listarPacotes(ativo);
 
       return reply.status(200).send({
@@ -89,8 +89,11 @@ export async function pacotesRoutes(fastify: FastifyInstance) {
       try {
         const { id } = request.params;
         const validado = atualizarPacoteSchema.partial().parse(request.body);
+        const dadosLimpos = Object.fromEntries(
+          Object.entries(validado).filter(([, v]) => v !== undefined)
+        ) as Partial<any>;
 
-        const pacote = await PacoteService.atualizarPacote(id, validado);
+        const pacote = await PacoteService.atualizarPacote(id, dadosLimpos);
 
         return reply.status(200).send({
           sucesso: true,

@@ -114,7 +114,7 @@ export class ConsultaCompletaService {
       where: { id: dados.id },
       data: {
         linkAnycar: dados.linkAnycar,
-        pdfUrl,
+        pdfUrl: pdfUrl || null,
         status: 'CONCLUIDA',
       },
       include: {

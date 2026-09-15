@@ -8,12 +8,12 @@ export async function infinityPayWebhookNew(fastify: FastifyInstance) {
     '/infinitypay/callback',
     async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
       try {
-        const evento = request.body;
+        const evento = request.body as any;
 
         console.log('🔔 Webhook InfinitePay recebido:');
         console.log(JSON.stringify(evento, null, 2));
 
-        if (!evento.event) {
+        if (!evento?.event) {
           return reply.status(400).send({
             sucesso: false,
             mensagem: 'Evento não identificado',
@@ -51,7 +51,7 @@ export async function infinityPayWebhookNew(fastify: FastifyInstance) {
     ) => {
       try {
         const { id } = request.params;
-        const { infinityPayPaymentId, evento } = request.body;
+        const { infinityPayPaymentId, evento } = request.body as any;
 
         if (!infinityPayPaymentId) {
           return reply.status(400).send({

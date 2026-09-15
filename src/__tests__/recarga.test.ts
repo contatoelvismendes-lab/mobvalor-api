@@ -8,7 +8,20 @@ describe('RecargaService', () => {
     name: 'João Silva',
     whatsapp: '11987654321',
     email: 'joao@email.com',
+    document: '12345678901234',
+    documentType: 'CNPJ',
+    companyName: 'João Silva LTDA',
+    addressZip: '12345678',
+    addressStreet: 'Rua Test',
+    addressNumber: '123',
+    addressComplement: null,
+    addressCity: 'São Paulo',
+    addressState: 'SP',
     balance: 100.0,
+    status: 'ATIVO',
+    role: 'DEALER',
+    createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
   const recargaMock = {

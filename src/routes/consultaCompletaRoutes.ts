@@ -98,7 +98,7 @@ export async function consultaCompletaRoutes(fastify: FastifyInstance) {
       try {
         const dados = entregarConsultaCompletaSchema.parse({
           id: request.params.id,
-          ...request.body,
+          ...(request.body as any),
         });
 
         const consulta = await ConsultaCompletaService.entregarConsultaCompleta(dados);

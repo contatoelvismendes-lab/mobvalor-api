@@ -83,7 +83,7 @@ export class PdfService {
     placa: string
   ): Promise<string> {
     try {
-      const { supabase } = await import('../config/supabase');
+      const { supabase } = await import('../config/supabase.js');
 
       const caminho = `consultas/${placa}/${nomeArquivo}`;
 

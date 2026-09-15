@@ -75,7 +75,8 @@ export class WhatsAppMessageHandler {
     // Criar consulta
     const consulta = await ConsultaCompletaService.solicitarConsultaCompleta({
       dealerId: dealer.id,
-      placa: 'XXXX'
+      placa: 'XXXX',
+      custo: 47.90
     });
 
     await sendWhatsAppNotification(

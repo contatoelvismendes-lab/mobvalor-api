@@ -23,6 +23,12 @@ model Dealer {
   role                String?
   balance             Float       @default(0.0)
   registrationStep    String      @default("WAITING_NAME")
+
+  // State Machine fields
+  state               String      @default("MENU")
+  current_plate       String?
+  context_data        Json?
+
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 

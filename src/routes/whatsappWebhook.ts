@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
+import { DealerStateManager, DealerState } from '../services/dealerStateManager';
 
 const prisma = new PrismaClient();
 
@@ -45,6 +46,196 @@ async function sendWhatsAppButtons(to: string, bodyText: string, buttons: Array<
   );
 }
 
+// ============= STATE HANDLERS =============
+
+async function handleMenuState(from: string, textContent: string) {
+  console.log(`📋 HANDLER: Menu State`);
+
+  if (textContent === 'menu_consulta' || textContent.includes('consulta')) {
+    console.log(`🔍 Nova Consulta solicitada`);
+    await DealerStateManager.setState(from, DealerState.WAITING_PLATE);
+
+    await sendWhatsAppText(
+      from,
+      `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+    );
+    console.log(`📤 Enviado: Instruções de placa\n`);
+    return true;
+  }
+
+  if (textContent === 'menu_suporte' || textContent.includes('suporte')) {
+    console.log(`💬 Suporte solicitado`);
+    await sendWhatsAppText(
+      from,
+      `💬 *Falar com Suporte*\n\nNossa equipe está à disposição! Descreva sua solicitação abaixo.`
+    );
+    console.log(`📤 Enviado: Mensagem de suporte\n`);
+    return true;
+  }
+
+  return false;
+}
+
+async function handleWaitingPlateState(from: string, textContent: string) {
+  console.log(`📋 HANDLER: Waiting Plate State`);
+
+  if (textContent === 'cancelar') {
+    console.log(`❌ Consulta cancelada`);
+    await DealerStateManager.resetToMenu(from);
+
+    await sendWhatsAppButtons(
+      from,
+      'Voltando ao menu...\n\nO que você deseja fazer?',
+      [
+        { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+        { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+      ]
+    );
+    console.log(`📤 Enviado: Menu\n`);
+    return true;
+  }
+
+  // Verificar se é uma placa válida
+  const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  if (cleanPlate.length === 7) {
+    console.log(`🚗 PLACA RECEBIDA: ${cleanPlate}`);
+
+    await DealerStateManager.savePlate(from, cleanPlate);
+
+    await sendWhatsAppText(
+      from,
+      `🔍 *Consultando placa ${cleanPlate}...*\n\nAguarde um instante.`
+    );
+
+    // Checklist da Consulta Completa
+    const consultaMessage = `✅ Placa ${cleanPlate} recebida!\n\n💎 *Consulta Completa — R$ 47,90*\n\nO que está incluído:\n✅ Informações Cadastrais\n✅ Identificação Técnica\n✅ Histórico de Proprietários\n✅ Débitos\n✅ Restrições Judiciais\n✅ Roubo e Furto\n✅ Gravame\n✅ Alienações\n✅ Sinistros\n✅ Recalls\n✅ Registro em Locadora\n✅ Aceitação em Seguradoras\n✅ Score do Veículo\n✅ Histórico de KM\n✅ Diversas Informações`;
+
+    await sendWhatsAppText(from, consultaMessage);
+    console.log(`📤 Enviado: Checklist`);
+
+    // Botões de ação
+    setTimeout(async () => {
+      await sendWhatsAppButtons(
+        from,
+        'O que você deseja fazer?',
+        [
+          { id: 'efetuar_consulta', title: '✅ Efetuar Consulta' },
+          { id: 'outras_consultas', title: '🔍 Outras Consultas' },
+          { id: 'cancelar', title: '❌ Cancelar' }
+        ]
+      );
+      console.log(`📤 Enviado: Botões de ação\n`);
+    }, 1500);
+
+    return true;
+  }
+
+  return false;
+}
+
+async function handlePlateReceivedState(from: string, textContent: string) {
+  console.log(`📋 HANDLER: Plate Received State`);
+
+  const { dealer } = await DealerStateManager.getState(from);
+
+  if (!dealer) {
+    console.log(`❌ Dealer não encontrado`);
+    return false;
+  }
+
+  // Efetuar Consulta
+  if (textContent === 'efetuar_consulta') {
+    console.log(`✅ AÇÃO: Efetuar Consulta solicitada`);
+
+    // Verificar dados de cadastro
+    if (!dealer.document || !dealer.email) {
+      console.log(`❌ Cadastro incompleto`);
+      await DealerStateManager.setState(from, DealerState.WAITING_REGISTRATION);
+
+      await sendWhatsAppText(
+        from,
+        `📋 *Cadastro Incompleto*\n\nPreciso de alguns dados para prosseguir:\n\n1️⃣ CNPJ ou CPF\n2️⃣ Email\n\n*Envie seu CNPJ ou CPF*`
+      );
+      console.log(`📤 Enviado: Pedindo cadastro\n`);
+      return true;
+    }
+
+    // Verificar saldo
+    if (dealer.balance < 47.90) {
+      console.log(`💰 Saldo insuficiente: R$ ${dealer.balance.toFixed(2)}`);
+
+      await sendWhatsAppText(
+        from,
+        `💰 *Saldo Insuficiente!*\n\nVocê tem: R$ ${dealer.balance.toFixed(2)}\nNecessário: R$ 47,90\n\n*Deseja fazer uma recarga?* Digite *recarga* ou *cancelar*`
+      );
+      console.log(`📤 Enviado: Pedindo recarga\n`);
+      return true;
+    }
+
+    // Debitar e processar consulta
+    console.log(`💳 Debitando R$ 47,90 da conta`);
+    await prisma.dealer.update({
+      where: { whatsapp: from },
+      data: { balance: dealer.balance - 47.90 }
+    });
+
+    await sendWhatsAppText(
+      from,
+      `✅ *Consulta Processada!*\n\n💳 Débito de R$ 47,90 realizado\n💰 Saldo: R$ ${(dealer.balance - 47.90).toFixed(2)}\n\n📋 A análise será entregue em breve!\n\n💜 Obrigado por usar a Mobvalor!`
+    );
+    console.log(`📤 Enviado: Confirmação de pagamento`);
+
+    setTimeout(async () => {
+      await DealerStateManager.resetToMenu(from);
+      await sendWhatsAppButtons(
+        from,
+        'O que você deseja fazer?',
+        [
+          { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+          { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+        ]
+      );
+      console.log(`📤 Enviado: Voltando ao menu\n`);
+    }, 2000);
+
+    return true;
+  }
+
+  // Outras Consultas
+  if (textContent === 'outras_consultas') {
+    console.log(`🔄 Outras Consultas solicitadas`);
+    await DealerStateManager.setState(from, DealerState.WAITING_PLATE);
+
+    await sendWhatsAppText(
+      from,
+      `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+    );
+    console.log(`📤 Enviado: Pedindo nova placa\n`);
+    return true;
+  }
+
+  // Cancelar
+  if (textContent === 'cancelar') {
+    console.log(`❌ Operação cancelada`);
+    await DealerStateManager.resetToMenu(from);
+
+    await sendWhatsAppButtons(
+      from,
+      'Voltando ao menu...\n\nO que você deseja fazer?',
+      [
+        { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+        { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+      ]
+    );
+    console.log(`📤 Enviado: Menu\n`);
+    return true;
+  }
+
+  return false;
+}
+
+// ============= WEBHOOK ROUTES =============
+
 export async function whatsappWebhookRoutes(app: FastifyInstance) {
   // Validação do webhook (GET)
   app.get('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -55,28 +246,25 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
     const token = query['hub.verify_token'];
     const challenge = query['hub.challenge'];
 
-    console.log('🔍 Webhook validation received:');
-    console.log(`   Mode: ${mode}`);
-    console.log(`   Token match: ${token === verifyToken}`);
-    console.log(`   Challenge: ${challenge?.slice(0, 10)}...`);
+    console.log('🔍 Webhook validation received');
 
     if (mode === 'subscribe' && token === verifyToken) {
-      console.log('✅ Webhook validado com sucesso!');
+      console.log('✅ Webhook validado!');
       return reply.status(200).send(challenge);
     }
 
-    console.error('❌ Erro ao validar webhook');
+    console.error('❌ Validação falhou');
     return reply.status(403).send({ error: 'Validation failed' });
   });
 
-  // Recebimento de mensagens (POST) - Fluxo simplificado
+  // Recebimento de mensagens (POST)
   app.post('/webhook/whatsapp', async (request: FastifyRequest, reply: FastifyReply) => {
     const body: any = request.body;
 
     try {
       const message = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
       if (!message) {
-        console.log('📭 Webhook recebido mas sem mensagem (status update)');
+        console.log('📭 Status update (sem mensagem)');
         return reply.status(200).send({ status: 'ignored' });
       }
 
@@ -85,7 +273,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       let textContent = '';
 
       console.log(`\n📱 [${'='.repeat(50)}]`);
-      console.log(`📍 Mensagem recebida de: ${from}`);
+      console.log(`📍 De: ${from}`);
       console.log(`📧 Tipo: ${msgType}`);
 
       if (msgType === 'text') {
@@ -93,26 +281,27 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
         console.log(`💬 Conteúdo: "${textContent}"`);
       } else if (msgType === 'interactive') {
         textContent = message.interactive.button_reply.id;
-        console.log(`🔘 Botão clicado: ${textContent}`);
+        console.log(`🔘 Botão: ${textContent}`);
       } else {
-        console.log(`⚠️ Tipo de mensagem não suportado: ${msgType}`);
-        return reply.status(200).send({ status: 'unsupported_type' });
+        console.log(`⚠️ Tipo não suportado: ${msgType}`);
+        return reply.status(200).send({ status: 'unsupported' });
       }
 
       // Encontrar ou criar dealer
       let dealer = await prisma.dealer.findUnique({ where: { whatsapp: from } });
 
       if (!dealer) {
-        console.log(`👤 ❌ Dealer NÃO encontrado. Criando novo...`);
+        console.log(`👤 ❌ Novo dealer`);
         dealer = await prisma.dealer.create({
           data: {
             whatsapp: from,
             name: `Lojista ${from}`,
             email: `${from}@mobvalor.com`,
-            balance: 10.0
+            balance: 10.0,
+            state: DealerState.MENU
           }
         });
-        console.log(`✅ Novo dealer criado! ID: ${dealer.id}, Saldo: R$ ${dealer.balance.toFixed(2)}`);
+        console.log(`✅ Dealer criado! Saldo: R$ ${dealer.balance.toFixed(2)}`);
 
         // Bem-vindo
         await sendWhatsAppText(
@@ -129,137 +318,32 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             { id: 'menu_suporte', title: '💬 Falar com Suporte' }
           ]
         );
-        console.log(`📤 Enviado: Bem-vindo + Menu inicial\n`);
+        console.log(`📤 Enviado: Bem-vindo + Menu\n`);
         return reply.status(200).send({ status: 'ok' });
       }
 
-      console.log(`✅ Dealer encontrado! ID: ${dealer.id}, Saldo: R$ ${dealer.balance.toFixed(2)}, Email: ${dealer.email}`);
+      console.log(`✅ Dealer encontrado. Estado: ${dealer.state}, Saldo: R$ ${dealer.balance.toFixed(2)}`);
 
-      // Menu principal
-      if (textContent === 'menu_consulta' || textContent.includes('consulta')) {
-        console.log(`🔍 AÇÃO: Nova Consulta solicitada`);
-        await sendWhatsAppText(
-          from,
-          `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
-        );
-        console.log(`📤 Enviado: Instruções de placa\n`);
-        return reply.status(200).send({ status: 'ok' });
+      // ============= STATE MACHINE ROUTING =============
+      const currentState = dealer.state as DealerState;
+
+      if (currentState === DealerState.MENU) {
+        const handled = await handleMenuState(from, textContent);
+        if (handled) return reply.status(200).send({ status: 'ok' });
       }
 
-      if (textContent === 'menu_suporte' || textContent.includes('suporte')) {
-        console.log(`💬 AÇÃO: Suporte solicitado`);
-        await sendWhatsAppText(
-          from,
-          `💬 *Falar com Suporte*\n\nNossa equipe está à disposição! Descreva sua solicitação abaixo.`
-        );
-        console.log(`📤 Enviado: Mensagem de suporte\n`);
-        return reply.status(200).send({ status: 'ok' });
+      if (currentState === DealerState.WAITING_PLATE) {
+        const handled = await handleWaitingPlateState(from, textContent);
+        if (handled) return reply.status(200).send({ status: 'ok' });
       }
 
-      if (textContent === 'efetuar_consulta') {
-        // Buscar dealer no banco
-        const dealerData = await prisma.dealer.findUnique({ where: { whatsapp: from } });
-
-        if (!dealerData) {
-          await sendWhatsAppText(
-            from,
-            `❌ *Erro!* Dealer não encontrado. Tente novamente.`
-          );
-          return reply.status(200).send({ status: 'error' });
-        }
-
-        // Verificar se tem CNPJ/CPF e email
-        if (!dealerData.document || !dealerData.email) {
-          await sendWhatsAppText(
-            from,
-            `📋 *Cadastro Incompleto*\n\nPreciso de alguns dados para prosseguir:\n\n1️⃣ CNPJ ou CPF\n2️⃣ Email\n\n*Envie seu CNPJ ou CPF*`
-          );
-          // TODO: Salvar estado para próxima mensagem
-          return reply.status(200).send({ status: 'ok' });
-        }
-
-        // Verificar saldo
-        if (dealerData.balance < 47.90) {
-          await sendWhatsAppText(
-            from,
-            `💰 *Saldo Insuficiente!*\n\nVocê tem: R$ ${dealerData.balance.toFixed(2)}\nNecessário: R$ 47,90\n\n*Deseja fazer uma recarga?* Digite *recarga* ou *cancelar*`
-          );
-          return reply.status(200).send({ status: 'ok' });
-        }
-
-        // Debitar e processar consulta
-        await prisma.dealer.update({
-          where: { whatsapp: from },
-          data: { balance: dealerData.balance - 47.90 }
-        });
-
-        await sendWhatsAppText(
-          from,
-          `✅ *Consulta Processada!*\n\n💳 Débito de R$ 47,90 realizado\n💰 Saldo: R$ ${(dealerData.balance - 47.90).toFixed(2)}\n\n📋 A análise será entregue em breve!\n\n💜 Obrigado por usar a Mobvalor!`
-        );
-
-        setTimeout(async () => {
-          await sendWhatsAppButtons(
-            from,
-            'O que você deseja fazer?',
-            [
-              { id: 'menu_consulta', title: '🔍 Nova Consulta' },
-              { id: 'menu_suporte', title: '💬 Falar com Suporte' }
-            ]
-          );
-        }, 2000);
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      if (textContent === 'outras_consultas') {
-        await sendWhatsAppText(
-          from,
-          `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
-        );
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      if (textContent === 'cancelar') {
-        await sendWhatsAppButtons(
-          from,
-          'Voltando ao menu...\n\nO que você deseja fazer?',
-          [
-            { id: 'menu_consulta', title: '🔍 Nova Consulta' },
-            { id: 'menu_suporte', title: '💬 Falar com Suporte' }
-          ]
-        );
-        return reply.status(200).send({ status: 'ok' });
-      }
-
-      // Processar placa
-      const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      if (cleanPlate.length === 7) {
-        await sendWhatsAppText(
-          from,
-          `🔍 *Consultando placa ${cleanPlate}...*\n\nAguarde um instante.`
-        );
-
-        // TODO: Integrar com API de consulta real
-        const consultaMessage = `✅ Placa ${cleanPlate} recebida!\n\n💎 *Consulta Completa — R$ 47,90*\n\nO que está incluído:\n✅ Informações Cadastrais\n✅ Identificação Técnica\n✅ Histórico de Proprietários\n✅ Débitos\n✅ Restrições Judiciais\n✅ Roubo e Furto\n✅ Gravame\n✅ Alienações\n✅ Sinistros\n✅ Recalls\n✅ Registro em Locadora\n✅ Aceitação em Seguradoras\n✅ Score do Veículo\n✅ Histórico de KM\n✅ Diversas Informações`;
-
-        await sendWhatsAppText(from, consultaMessage);
-
-        // Botões de ação
-        setTimeout(async () => {
-          await sendWhatsAppButtons(
-            from,
-            'O que você deseja fazer?',
-            [
-              { id: 'efetuar_consulta', title: '✅ Efetuar Consulta' },
-              { id: 'outras_consultas', title: '🔍 Outras Consultas' },
-              { id: 'cancelar', title: '❌ Cancelar' }
-            ]
-          );
-        }, 1500);
-        return reply.status(200).send({ status: 'ok' });
+      if (currentState === DealerState.PLATE_RECEIVED) {
+        const handled = await handlePlateReceivedState(from, textContent);
+        if (handled) return reply.status(200).send({ status: 'ok' });
       }
 
       // Mensagem não reconhecida
+      console.log(`❓ Mensagem não reconhecida para estado: ${currentState}`);
       await sendWhatsAppButtons(
         from,
         'Não entendi. O que você deseja fazer?',
@@ -268,10 +352,11 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
           { id: 'menu_suporte', title: '💬 Falar com Suporte' }
         ]
       );
+      console.log(`📤 Enviado: Menu padrão\n`);
 
-      return reply.status(200).send({ status: 'success' });
+      return reply.status(200).send({ status: 'ok' });
     } catch (error) {
-      console.error('❌ Erro crítico no webhook:', error);
+      console.error('❌ Erro crítico:', error);
       return reply.status(200).send({ status: 'error' });
     }
   });

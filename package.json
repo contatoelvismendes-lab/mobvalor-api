@@ -7,6 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
     "postinstall": "prisma skills sync || exit 0"
   },
   "keywords": [],
@@ -19,12 +21,15 @@
     "axios": "^1.7.9",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
-    "openai": "^7.7.0"
+    "openai": "^7.7.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/node": "^22.13.5",
+    "@vitest/coverage-v8": "^1.0.4",
     "prisma": "^6.19.3",
     "tsx": "^4.19.3",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^1.0.4"
   }
 }

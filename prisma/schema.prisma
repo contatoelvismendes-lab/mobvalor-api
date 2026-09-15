@@ -8,12 +8,12 @@ generator client {
 }
 
 model Dealer {
-  id                  String   @id @default(uuid())
-  whatsapp            String   @unique
+  id                  String      @id @default(uuid())
+  whatsapp            String      @unique
   name                String?
-  email               String?  @unique
+  email               String?     @unique
   documentType        String?
-  document            String?  @unique
+  document            String?     @unique
   companyName         String?
   addressZip          String?
   addressStreet       String?
@@ -21,8 +21,82 @@ model Dealer {
   addressCity         String?
   addressState        String?
   role                String?
-  balance             Float    @default(0.0)
-  registrationStep    String   @default("WAITING_NAME")
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  balance             Float       @default(0.0)
+  registrationStep    String      @default("WAITING_NAME")
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  pacotes              Pacote[]
+  consultas            Consulta[]
+  consultasCompletas   ConsultaCompleta[]
+  transacoes           Transacao[]
+  recargas             Recarga[]
+}
+
+model Pacote {
+  id          String   @id @default(uuid())
+  nome        String
+  descricao   String?
+  preco       Float
+  consultas   Int
+  duracao     Int
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dealers     Dealer[]
+}
+
+model Consulta {
+  id          String   @id @default(uuid())
+  dealerId    String
+  dealer      Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+  tipo        String
+  placa       String
+  resultado   String?
+  status      String   @default("PENDENTE")
+  custo       Float    @default(0.0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Transacao {
+  id          String   @id @default(uuid())
+  dealerId    String
+  dealer      Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+  tipo        String
+  valor       Float
+  status      String   @default("PENDENTE")
+  descricao   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ConsultaCompleta {
+  id              String   @id @default(uuid())
+  dealerId        String
+  dealer          Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+  placa           String
+  linkAnycar      String?
+  pdfUrl          String?
+  status          String   @default("EM_ANALISE")
+  custo           Float    @default(47.90)
+  notaFiscal      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Recarga {
+  id                    String   @id @default(uuid())
+  dealerId              String
+  dealer                Dealer   @relation(fields: [dealerId], references: [id], onDelete: Cascade)
+  valor                 Float
+  taxa                  Float    @default(0.0)
+  valorTotal            Float
+  formaPagamento        String
+  infinityPayPaymentId  String?
+  status                String   @default("PENDENTE")
+  bonus                 Float    @default(0.0)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }

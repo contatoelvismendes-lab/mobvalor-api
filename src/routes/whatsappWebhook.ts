@@ -5,6 +5,19 @@ import { DealerStateManager, DealerState } from '../services/dealerStateManager'
 
 const prisma = new PrismaClient();
 
+// Validar placa brasileira: ABC-1234 (padrão) ou ABC1D23 (Mercosul)
+function validateBrazilianLicense(plate: string): boolean {
+  const clean = plate.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+  // Padrão: 3 letras + 4 números (ABC1234)
+  const standardPattern = /^[A-Z]{3}\d{4}$/;
+
+  // Mercosul: 3 letras + 1 número + 1 letra + 2 números (ABC1D23)
+  const mercosulPattern = /^[A-Z]{3}\d[A-Z]\d{2}$/;
+
+  return standardPattern.test(clean) || mercosulPattern.test(clean);
+}
+
 async function sendWhatsAppText(to: string, text: string) {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
@@ -97,7 +110,7 @@ async function handleWaitingPlateState(from: string, textContent: string) {
 
   // Verificar se é uma placa válida
   const cleanPlate = textContent.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-  if (cleanPlate.length === 7) {
+  if (cleanPlate.length === 7 && validateBrazilianLicense(textContent)) {
     console.log(`🚗 PLACA RECEBIDA: ${cleanPlate}`);
 
     await DealerStateManager.savePlate(from, cleanPlate);
@@ -127,6 +140,17 @@ async function handleWaitingPlateState(from: string, textContent: string) {
       console.log(`📤 Enviado: Botões de ação\n`);
     }, 1500);
 
+    return true;
+  }
+
+  // Placa inválida
+  if (cleanPlate.length === 7 || (cleanPlate.length > 0 && !validateBrazilianLicense(textContent))) {
+    console.log(`❌ Placa inválida: ${textContent}`);
+    await sendWhatsAppText(
+      from,
+      `❌ *Placa inválida!*\n\nOs formatos aceitos são:\n\n📋 *Padrão:* ABC-1234 (3 letras + 4 números)\n📋 *Mercosul:* ABC1D23 (3 letras + 1 número + 1 letra + 2 números)\n\nTente novamente com o formato correto.\n\n💡 Ou digite *cancelar* para voltar ao menu.`
+    );
+    console.log(`📤 Enviado: Aviso de placa inválida\n`);
     return true;
   }
 
@@ -240,6 +264,34 @@ async function handlePlateReceivedState(from: string, textContent: string) {
   // Cancelar
   if (textContent === 'cancelar') {
     console.log(`❌ Operação cancelada`);
+    await DealerStateManager.resetToMenu(from);
+
+    await sendWhatsAppButtons(
+      from,
+      'Voltando ao menu...\n\nO que você deseja fazer?',
+      [
+        { id: 'menu_consulta', title: '🔍 Nova Consulta' },
+        { id: 'menu_suporte', title: '💬 Falar com Suporte' }
+      ]
+    );
+    console.log(`📤 Enviado: Menu\n`);
+    return true;
+  }
+
+  // Fazer Recarga
+  if (textContent === 'fazer_recarga') {
+    console.log(`💳 Recarga solicitada`);
+    await sendWhatsAppText(
+      from,
+      `💳 *Recarga Disponível*\n\nQual valor deseja recarregar?\n\n💵 *PIX* - 0% taxa\n💳 *Cartão* - 2.99% taxa\n\n🎁 Bônus de 5% acima de R$ 499\n\nResponda com o valor (ex: 100)`
+    );
+    console.log(`📤 Enviado: Opções de recarga\n`);
+    return true;
+  }
+
+  // Voltar Menu
+  if (textContent === 'voltar_menu') {
+    console.log(`⬅️ Voltando ao menu`);
     await DealerStateManager.resetToMenu(from);
 
     await sendWhatsAppButtons(
@@ -460,8 +512,10 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
         if (handled) return reply.status(200).send({ status: 'ok' });
       }
 
-      // Mensagem não reconhecida
-      console.log(`❓ Mensagem não reconhecida para estado: ${currentState}`);
+      // Mensagem não reconhecida - resetar para MENU
+      console.log(`❓ Mensagem não reconhecida para estado: ${currentState}, ressetando para MENU`);
+      await DealerStateManager.resetToMenu(from);
+
       await sendWhatsAppButtons(
         from,
         'Não entendi. O que você deseja fazer?',

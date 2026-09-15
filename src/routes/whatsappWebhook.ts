@@ -75,17 +75,27 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
 
     try {
       const message = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-      if (!message) return reply.status(200).send({ status: 'ignored' });
+      if (!message) {
+        console.log('📭 Webhook recebido mas sem mensagem (status update)');
+        return reply.status(200).send({ status: 'ignored' });
+      }
 
       const from = message.from;
       const msgType = message.type;
       let textContent = '';
 
+      console.log(`\n📱 [${'='.repeat(50)}]`);
+      console.log(`📍 Mensagem recebida de: ${from}`);
+      console.log(`📧 Tipo: ${msgType}`);
+
       if (msgType === 'text') {
         textContent = message.text.body.trim().toLowerCase();
+        console.log(`💬 Conteúdo: "${textContent}"`);
       } else if (msgType === 'interactive') {
         textContent = message.interactive.button_reply.id;
+        console.log(`🔘 Botão clicado: ${textContent}`);
       } else {
+        console.log(`⚠️ Tipo de mensagem não suportado: ${msgType}`);
         return reply.status(200).send({ status: 'unsupported_type' });
       }
 
@@ -93,7 +103,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       let dealer = await prisma.dealer.findUnique({ where: { whatsapp: from } });
 
       if (!dealer) {
-        console.log(`👤 Criando novo dealer: ${from}`);
+        console.log(`👤 ❌ Dealer NÃO encontrado. Criando novo...`);
         dealer = await prisma.dealer.create({
           data: {
             whatsapp: from,
@@ -102,6 +112,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             balance: 10.0
           }
         });
+        console.log(`✅ Novo dealer criado! ID: ${dealer.id}, Saldo: R$ ${dealer.balance.toFixed(2)}`);
 
         // Bem-vindo
         await sendWhatsAppText(
@@ -118,23 +129,30 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
             { id: 'menu_suporte', title: '💬 Falar com Suporte' }
           ]
         );
+        console.log(`📤 Enviado: Bem-vindo + Menu inicial\n`);
         return reply.status(200).send({ status: 'ok' });
       }
 
+      console.log(`✅ Dealer encontrado! ID: ${dealer.id}, Saldo: R$ ${dealer.balance.toFixed(2)}, Email: ${dealer.email}`);
+
       // Menu principal
       if (textContent === 'menu_consulta' || textContent.includes('consulta')) {
+        console.log(`🔍 AÇÃO: Nova Consulta solicitada`);
         await sendWhatsAppText(
           from,
           `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
         );
+        console.log(`📤 Enviado: Instruções de placa\n`);
         return reply.status(200).send({ status: 'ok' });
       }
 
       if (textContent === 'menu_suporte' || textContent.includes('suporte')) {
+        console.log(`💬 AÇÃO: Suporte solicitado`);
         await sendWhatsAppText(
           from,
           `💬 *Falar com Suporte*\n\nNossa equipe está à disposição! Descreva sua solicitação abaixo.`
         );
+        console.log(`📤 Enviado: Mensagem de suporte\n`);
         return reply.status(200).send({ status: 'ok' });
       }
 

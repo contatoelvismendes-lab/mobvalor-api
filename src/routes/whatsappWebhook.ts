@@ -139,9 +139,45 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
       }
 
       if (textContent === 'efetuar_consulta') {
+        // Buscar dealer no banco
+        const dealerData = await prisma.dealer.findUnique({ where: { whatsapp: from } });
+
+        if (!dealerData) {
+          await sendWhatsAppText(
+            from,
+            `❌ *Erro!* Dealer não encontrado. Tente novamente.`
+          );
+          return reply.status(200).send({ status: 'error' });
+        }
+
+        // Verificar se tem CNPJ/CPF e email
+        if (!dealerData.document || !dealerData.email) {
+          await sendWhatsAppText(
+            from,
+            `📋 *Cadastro Incompleto*\n\nPreciso de alguns dados para prosseguir:\n\n1️⃣ CNPJ ou CPF\n2️⃣ Email\n\n*Envie seu CNPJ ou CPF*`
+          );
+          // TODO: Salvar estado para próxima mensagem
+          return reply.status(200).send({ status: 'ok' });
+        }
+
+        // Verificar saldo
+        if (dealerData.balance < 47.90) {
+          await sendWhatsAppText(
+            from,
+            `💰 *Saldo Insuficiente!*\n\nVocê tem: R$ ${dealerData.balance.toFixed(2)}\nNecessário: R$ 47,90\n\n*Deseja fazer uma recarga?* Digite *recarga* ou *cancelar*`
+          );
+          return reply.status(200).send({ status: 'ok' });
+        }
+
+        // Debitar e processar consulta
+        await prisma.dealer.update({
+          where: { whatsapp: from },
+          data: { balance: dealerData.balance - 47.90 }
+        });
+
         await sendWhatsAppText(
           from,
-          `✅ *Consulta Confirmada!*\n\nSeu crédito foi debitado no valor de R$ 47,90.\n\n📋 A análise será processada em breve. Você receberá o resultado em alguns minutos!\n\n💜 Obrigado por usar a Mobvalor!`
+          `✅ *Consulta Processada!*\n\n💳 Débito de R$ 47,90 realizado\n💰 Saldo: R$ ${(dealerData.balance - 47.90).toFixed(2)}\n\n📋 A análise será entregue em breve!\n\n💜 Obrigado por usar a Mobvalor!`
         );
 
         setTimeout(async () => {
@@ -153,7 +189,7 @@ export async function whatsappWebhookRoutes(app: FastifyInstance) {
               { id: 'menu_suporte', title: '💬 Falar com Suporte' }
             ]
           );
-        }, 1500);
+        }, 2000);
         return reply.status(200).send({ status: 'ok' });
       }
 

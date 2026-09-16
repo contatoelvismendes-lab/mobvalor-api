@@ -92,6 +92,28 @@ async function handleMenuState(from: string, textContent: string) {
 async function handleWaitingPlateState(from: string, textContent: string) {
   console.log(`📋 HANDLER: Waiting Plate State`);
 
+  // Menu botões em estado de placa
+  if (textContent === 'menu_consulta') {
+    console.log(`🔄 Nova Consulta - Mantendo em WAITING_PLATE`);
+    await sendWhatsAppText(
+      from,
+      `🚗 *Nova Consulta*\n\nMe envie a placa do veículo que você quer consultar.\n\n*Ex.:* ABC-1234 ou ABC1D23\n\n💡 A qualquer momento, digite *cancelar* para voltar ao menu.`
+    );
+    console.log(`📤 Enviado: Pedindo placa novamente\n`);
+    return true;
+  }
+
+  if (textContent === 'menu_suporte') {
+    console.log(`💬 Suporte solicitado do estado WAITING_PLATE`);
+    await DealerStateManager.resetToMenu(from);
+    await sendWhatsAppText(
+      from,
+      `💬 *Falar com Suporte*\n\nNossa equipe está à disposição! Descreva sua solicitação abaixo.`
+    );
+    console.log(`📤 Enviado: Mensagem de suporte\n`);
+    return true;
+  }
+
   if (textContent === 'cancelar') {
     console.log(`❌ Consulta cancelada`);
     await DealerStateManager.resetToMenu(from);
@@ -149,7 +171,7 @@ async function handleWaitingPlateState(from: string, textContent: string) {
 
     await sendWhatsAppText(
       from,
-      `❌ *Placa inválida!*\n\nOs formatos aceitos são:\n\n📋 *Padrão:* ABC-1234 (3 letras + 4 números)\n📋 *Mercosul:* ABC1D23 (3 letras + 1 número + 1 letra + 2 números)\n\nTente novamente com o formato correto.`
+      `❌ *Placa inválida!*\n\nOs formatos aceitos são:\n\n📋 *Padrão:* ABC-1234 (3 letras + 4 números)\n📋 *Mercosul:* ABC1D23 (3 letras + 1 número + 1 letra + 2 números)\n\n*Opções:*\n✏️ Digite novamente com o formato correto\n📷 Envie foto da placa do veículo\n📄 Envie CRLV (PDF ou foto)\n\n💡 Nosso time analisará e fará a consulta para você!`
     );
 
     setTimeout(async () => {

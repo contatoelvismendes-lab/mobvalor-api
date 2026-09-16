@@ -218,10 +218,11 @@ async function handlePlateReceivedState(from: string, textContent: string) {
   // Efetuar Consulta
   if (textContent === 'efetuar_consulta') {
     console.log(`✅ AÇÃO: Efetuar Consulta solicitada`);
+    console.log(`📋 DEBUG: document="${dealer.document}" | email="${dealer.email}"`);
 
     // Verificar dados de cadastro
     if (!dealer.document || !dealer.email) {
-      console.log(`❌ Cadastro incompleto`);
+      console.log(`❌ Cadastro incompleto - Pedindo dados`);
       await DealerStateManager.setState(from, DealerState.WAITING_REGISTRATION);
 
       await sendWhatsAppText(
